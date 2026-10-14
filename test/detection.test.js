@@ -65,3 +65,26 @@ test('crop validation rejects crossed, collapsed, reversed and non-finite corner
   assert.equal(isValidQuad([{ x: NaN, y: 0 }, ...expected.slice(1)]), false);
   assert.equal(isValidQuad(null), false);
 });
+
+test('a folded or curved page still yields a usable four-corner crop', () => {
+  // The top edge bulges like a page that is bent or curled by a fold.
+  const source = new cv.Mat(800, 600, cv.CV_8UC4, new cv.Scalar(50, 50, 50, 255));
+  const outline = [];
+  for (let step = 0; step <= 16; step++) {
+    const t = step / 16;
+    outline.push({ x: Math.round(90 + (510 - 90) * t), y: Math.round(70 + (110 - 70) * t - 40 * Math.sin(Math.PI * t)) });
+  }
+  outline.push({ x: 550, y: 700 }, { x: 60, y: 740 });
+  const points = cv.matFromArray(outline.length, 1, cv.CV_32SC2, outline.flatMap(({ x, y }) => [x, y]));
+  try {
+    cv.fillConvexPoly(source, points, new cv.Scalar(235, 235, 235, 255));
+    for (let y = 160; y < 650; y += 30) cv.line(source, new cv.Point(140, y), new cv.Point(450, y), new cv.Scalar(35, 35, 35, 255), 3);
+    const result = detectPageMat(source, cv);
+    assert.equal(result.detected, true);
+    assert.ok(isValidQuad(result.corners));
+    const xs = result.corners.map((point) => point.x);
+    const ys = result.corners.map((point) => point.y);
+    assert.ok(Math.min(...xs) < 110 && Math.max(...xs) > 490, `Crop should span the page width: ${JSON.stringify(result.corners)}`);
+    assert.ok(Math.min(...ys) < 110 && Math.max(...ys) > 680, `Crop should span the page height: ${JSON.stringify(result.corners)}`);
+  } finally { points.delete(); source.delete(); }
+});

@@ -78,6 +78,19 @@ function polygonArea(points) {
   return Math.abs(area / 2);
 }
 
+/** Corners of a rotated rectangle, used when a page is folded or curved. */
+function rectangleCorners(rect) {
+  const theta = (rect.angle * Math.PI) / 180;
+  const cos = Math.cos(theta);
+  const sin = Math.sin(theta);
+  const halfWidth = rect.size.width / 2;
+  const halfHeight = rect.size.height / 2;
+  return [[-halfWidth, -halfHeight], [halfWidth, -halfHeight], [halfWidth, halfHeight], [-halfWidth, halfHeight]].map(([x, y]) => ({
+    x: rect.center.x + x * cos - y * sin,
+    y: rect.center.y + x * sin + y * cos,
+  }));
+}
+
 function contourCandidates(cv, source, minArea) {
   const contours = new cv.MatVector();
   const hierarchy = new cv.Mat();
@@ -92,6 +105,7 @@ function contourCandidates(cv, source, minArea) {
         continue;
       }
       const perimeter = cv.arcLength(contour, true);
+      let foundQuad = false;
       for (const epsilon of [0.012, 0.018, 0.025, 0.035, 0.05]) {
         const approximation = new cv.Mat();
         cv.approxPolyDP(contour, approximation, epsilon * perimeter, true);
@@ -105,9 +119,22 @@ function contourCandidates(cv, source, minArea) {
           const ratio = quadArea / area;
           if (ratio > 0.68 && points.every((point) => Number.isFinite(point.x) && Number.isFinite(point.y))) {
             candidates.push({ points, area: quadArea, ratio });
+            foundQuad = true;
           }
         }
         approximation.delete();
+      }
+      if (!foundQuad) {
+        // Folded or curved pages rarely form a clean quadrilateral. Their
+        // minimum-area rectangle still bounds the page well, so keep it as a
+        // lower-priority candidate that a true quadrilateral can beat.
+        const rect = cv.minAreaRect(contour);
+        const points = orderCorners(rectangleCorners(rect));
+        const quadArea = polygonArea(points);
+        const ratio = quadArea / area;
+        if (ratio >= 1 && ratio < 1.3 && points.every((point) => Number.isFinite(point.x) && Number.isFinite(point.y))) {
+          candidates.push({ points, area: quadArea, ratio, penalty: 0.85 });
+        }
       }
       contour.delete();
     }
@@ -177,7 +204,7 @@ export function detectPageMat(source, cv) {
       });
     }).map((candidate) => ({
       ...candidate,
-      score: candidate.area / totalArea * Math.min(candidate.ratio, 1 / candidate.ratio),
+      score: candidate.area / totalArea * Math.min(candidate.ratio, 1 / candidate.ratio) * (candidate.penalty || 1),
     })).sort((a, b) => b.score - a.score);
 
     const best = usable[0];

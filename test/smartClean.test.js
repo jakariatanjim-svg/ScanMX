@@ -73,3 +73,27 @@ test('dark and tiny inputs return finite opaque pixels without crashing', () => 
     assert.deepEqual([...output.data], [...input.data]);
   } finally { input.delete(); output.delete(); }
 });
+
+test('a blank page is stretched to white without dividing by zero', () => {
+  const input = new cv.Mat(300, 400, cv.CV_8UC4, new cv.Scalar(232, 232, 232, 255));
+  for (let i = 0; i < input.data.length; i += 4) input.data[i] = Math.max(0, Math.min(255, input.data[i] + ((i / 4) % 7) - 3));
+  const output = smartClean(cv, input);
+  try {
+    for (let i = 0; i < output.data.length; i += 4) {
+      assert.ok(output.data[i] >= 245 && output.data[i + 1] >= 245 && output.data[i + 2] >= 245, `pixel ${i / 4} is not white`);
+    }
+  } finally { input.delete(); output.delete(); }
+});
+
+test('warm paper tint is neutralised to white while colored ink keeps its hue', () => {
+  const input = new cv.Mat(400, 400, cv.CV_8UC4, new cv.Scalar(200, 225, 240, 255));
+  cv.line(input, new cv.Point(60, 200), new cv.Point(340, 200), new cv.Scalar(30, 40, 150, 255), 5);
+  const output = smartClean(cv, input);
+  try {
+    const paper = (400 * 20 + 40) * 4;
+    const [r, g, b] = [output.data[paper], output.data[paper + 1], output.data[paper + 2]];
+    assert.ok(Math.abs(r - b) <= 6 && r >= 245 && g >= 245, `Paper should be neutral white: ${r},${g},${b}`);
+    const ink = (200 * 400 + 200) * 4;
+    assert.ok(output.data[ink + 2] - output.data[ink] > 60, 'Blue ink should stay blue');
+  } finally { input.delete(); output.delete(); }
+});
