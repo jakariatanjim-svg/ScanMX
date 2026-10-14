@@ -99,7 +99,7 @@ const translations = {
     failedExport: 'The file could not be created. Please try again.', failedImport: 'One or more images could not be opened.',
     smartNote: 'Corrects fold shadows, uneven lighting and paper tint automatically. Severe creases, glare or blur may still need a new photo.', dropRelease: 'Release to add documents', originalAlt: 'Original photo with adjustable document corners', previewAlt: 'Processed document preview', moreExport: 'More export options', smartBadge: 'SMART CLEAN', perspectiveLabel: 'Perspective correction',
     pageFallback: 'Page', loading: 'Opening your document…',
-    linesTitle: 'Ruled lines', keepLines: 'Keep lines', textOnly: 'Text only', straightenLabel: 'Straighten curved text',
+    linesTitle: 'Ruled lines', keepLines: 'Keep lines', textOnly: 'Text only', straightenLabel: 'Straighten curved text', sharpenLabel: 'Sharpen text (beta)',
   },
   bn: {
     studio: 'ডকুমেন্ট স্টুডিও', local: 'সম্পূর্ণ আপনার ডিভাইসে', engineLoading: 'স্ক্যানার প্রস্তুত হচ্ছে', engineReady: 'অফলাইন স্ক্যানার প্রস্তুত',
@@ -127,7 +127,7 @@ const translations = {
     failedExport: 'ফাইল তৈরি করা যায়নি। আবার চেষ্টা করুন।', failedImport: 'এক বা একাধিক ছবি খোলা যায়নি।',
     smartNote: 'ভাঁজের ছায়া, অসম আলো ও কাগজের রং স্বয়ংক্রিয়ভাবে ঠিক হয়। খুব গভীর ভাঁজ, আলোর ঝলক বা ঝাপসা ছবির জন্য নতুন ছবি প্রয়োজন হতে পারে।', dropRelease: 'ডকুমেন্ট যোগ করতে ছেড়ে দিন', originalAlt: 'কোণা সমন্বয়ের জন্য মূল ছবি', previewAlt: 'প্রসেস করা ডকুমেন্টের প্রিভিউ', moreExport: 'এক্সপোর্টের আরও বিকল্প', smartBadge: 'স্বয়ংক্রিয় এনহ্যান্সমেন্ট', perspectiveLabel: 'পার্সপেক্টিভ সংশোধন',
     pageFallback: 'পাতা', loading: 'ছবি লোড হচ্ছে…',
-    linesTitle: 'খাতার লাইন', keepLines: 'লাইন রাখুন', textOnly: 'শুধু লেখা', straightenLabel: 'বাঁকা লেখা সোজা করুন',
+    linesTitle: 'খাতার লাইন', keepLines: 'লাইন রাখুন', textOnly: 'শুধু লেখা', straightenLabel: 'বাঁকা লেখা সোজা করুন', sharpenLabel: 'লেখা স্পষ্ট করুন (বিটা)',
   },
 };
 
@@ -478,7 +478,7 @@ function App() {
           id, file, url, name: file.name || `ScanMX-${Date.now()}.png`, width, height,
           corners: getFullFrame(width, height),
           detected: false, detectionAttempted: false, confidence: 0,
-          mode: 'smart', rotation: 0, settings: { cleanup: 80, exposure: 0, keepLines: true, straighten: true },
+          mode: 'smart', rotation: 0, settings: { cleanup: 80, exposure: 0, keepLines: true, straighten: true, sharpenText: false },
           editVersion: 0, previewVersion: -1, previewUrl: null, previewWidth: 0, previewHeight: 0,
           isProcessing: true, processError: '',
         };
@@ -843,6 +843,13 @@ function App() {
                             <ToggleButton value="text">{copy.textOnly}</ToggleButton>
                           </ToggleButtonGroup>
                         </div>
+                      )}
+                      {activePage.mode === 'smart' && (
+                        <FormControlLabel
+                          className="sharpen-toggle"
+                          control={<Switch checked={activePage.settings.sharpenText === true} onChange={(event) => updateActive({ settings: { ...activePage.settings, sharpenText: event.target.checked } })} />}
+                          label={copy.sharpenLabel}
+                        />
                       )}
                       <FormControlLabel
                         className="straighten-toggle"

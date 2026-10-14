@@ -11,7 +11,7 @@
  * 4. Optionally erase ruled lines ("Text only") — long straight strokes — while text
  *    shapes are left alone.
  * 5. Auto-level, deepen the text with a gamma curve, and boost ink colour.
- * 6. Built-in text enhancer (textEnhancer.js) sharpens blurred or faded text.
+ * 6. Optional built-in text enhancer (textEnhancer.js, settings.sharpenText) sharpens blurred text.
  *
  * Coloured documents (ID cards, photos, coloured forms):
  * Dividing by a paper map would wash out colour fields, so these skip the paper
@@ -153,6 +153,8 @@ export function smartClean(cv, input, settings = {}) {
     const blend = 1 - (1 - strength) ** 2;
     const exposure = clamp(Number(settings.exposure) || 0, -30, 30);
     const keepLines = settings.keepLines !== false;
+    // The text enhancer is optional (beta): it sharpens strokes but can add faint halos.
+    const sharpenText = settings.sharpenText === true;
     const width = input.cols;
     const height = input.rows;
     const pixels = width * height;
@@ -221,6 +223,10 @@ export function smartClean(cv, input, settings = {}) {
 
     // Built-in text enhancer: sharpens blurred or faded strokes and keeps colour.
     // It replaces the old fixed unsharp mask, which would double-sharpen the page.
+    if (!sharpenText) {
+      result = processed;
+      return result;
+    }
     const enhanced = mat();
     enhanced.create(height, width, cv.CV_8UC4);
     enhanced.data.set(enhanceRgba(output, width, height, blend));

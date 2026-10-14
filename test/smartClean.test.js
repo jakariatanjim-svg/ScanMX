@@ -157,3 +157,17 @@ test('coloured documents such as ID cards keep their colour instead of turning g
     input.delete(); output.delete();
   }
 });
+
+test('the text enhancer is off by default and only runs when Sharpen text is on', () => {
+  const input = new cv.Mat(120, 160, cv.CV_8UC4, new cv.Scalar(235, 235, 235, 255));
+  cv.line(input, new cv.Point(20, 60), new cv.Point(140, 60), new cv.Scalar(90, 90, 90, 255), 4);
+  const base = smartClean(cv, input, { cleanup: 80 });
+  const off = smartClean(cv, input, { cleanup: 80, sharpenText: false });
+  const on = smartClean(cv, input, { cleanup: 80, sharpenText: true });
+  try {
+    assert.deepEqual(Array.from(base.data), Array.from(off.data));
+    assert.notDeepEqual(Array.from(on.data), Array.from(off.data));
+  } finally {
+    input.delete(); base.delete(); off.delete(); on.delete();
+  }
+});
