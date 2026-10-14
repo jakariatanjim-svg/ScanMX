@@ -5,6 +5,7 @@ import {
   ButtonBase,
   Chip,
   CircularProgress,
+  CssBaseline,
   Divider,
   IconButton,
   Menu,
@@ -41,6 +42,7 @@ import TuneRounded from '@mui/icons-material/TuneRounded';
 import UploadFileRounded from '@mui/icons-material/UploadFileRounded';
 import { canvasToBlob, detectPage, getOpenCv, loadImage, processScan } from './scanEngine';
 import { createPdfBlob } from './pdf';
+import { isValidQuad } from './geometry.js';
 import './styles.css';
 
 const theme = createTheme({
@@ -55,7 +57,7 @@ const theme = createTheme({
   },
   shape: { borderRadius: 14 },
   typography: {
-    fontFamily: 'Inter, "Hind Siliguri", "Noto Sans Bengali", "Nirmala UI", system-ui, sans-serif',
+    fontFamily: 'Inter, "Hind Siliguri", "Noto Sans Bengali Variable", "Nirmala UI", system-ui, sans-serif',
     button: { textTransform: 'none', fontWeight: 650 },
   },
   components: {
@@ -68,55 +70,57 @@ const theme = createTheme({
 
 const translations = {
   en: {
-    studio: 'DOCUMENT STUDIO', local: '100% on your device', engineLoading: 'Warming up scanner', engineReady: 'Offline scanner ready',
-    heroEyebrow: 'A PRIVATE, BROWSER-BASED SCANNER', heroA: 'Make every page', heroB: 'look scanned.',
-    heroBody: 'Turn everyday photos into clean, straightened documents. Crop, flatten shadows, sharpen the print and export — all on this device.',
-    noAccount: 'No account', noUploads: 'No uploads', noPageCap: 'No page cap', processedHere: 'Processed on this device',
-    threeSteps: 'SCANMX, IN THREE STEPS', makeScanReady: 'Make it scan-ready', pageShape: 'Page shape', dragHandles: 'Drag the bright handles to fit the page', localEngine: 'LOCAL SCAN ENGINE',
-    dropTitle: 'Drop your pages here', dropBody: 'or choose photos from this device', choose: 'Choose images', camera: 'Use camera',
-    fileHint: 'JPG · PNG · WEBP', pasteHint: 'Have a screenshot? Press', pasteEnd: 'to paste it',
-    privacyTitle: 'Your pages stay yours', privacyBody: 'ScanMX runs locally in this tab. Your photos are never sent to a server.',
-    localChip: 'PRIVATE BY DEFAULT', howTitle: 'From photo to finished scan', howBody: 'A simple local workflow, from the first page to a ready-to-share PDF.',
-    stepOne: 'Add a page', stepOneBody: 'Drop, browse, use your camera or paste a screenshot.', stepTwo: 'Make it scan-ready', stepTwoBody: 'Auto-crop the page, straighten its perspective and clean up the paper.', stepThree: 'Save and share', stepThreeBody: 'Download one polished PDF or save a page as an image.',
-    footer: 'Made for the pages you need to keep.',
-    workspace: 'YOUR SCAN DESK', addPages: 'Add pages', page: 'PAGE', pages: 'PAGES',
-    scanPreview: 'Scan preview', editCorners: 'Adjust corners', finishCorners: 'Done adjusting',
+    studio: 'DOCUMENT STUDIO', local: 'Processed on your device', engineLoading: 'Initializing scan engine', engineReady: 'Offline scanner ready',
+    heroEyebrow: 'A PRIVATE, BROWSER-BASED SCANNER', heroA: 'Professional scans.', heroB: 'Entirely private.',
+    heroBody: 'Create clear, properly aligned documents from your photos. Automatic cropping, shadow reduction and high-quality exports — processed entirely on your device.',
+    noAccount: 'No account required', noUploads: 'No uploads', noPageCap: 'Unlimited pages', processedHere: 'Processed on this device',
+    threeSteps: 'SCANMX, IN THREE STEPS', makeScanReady: 'Enhance your document', pageShape: 'Document boundaries', dragHandles: 'Drag each corner to align with the document boundary', localEngine: 'LOCAL SCAN ENGINE',
+    dropTitle: 'Add your documents', dropBody: 'Drag images here or select files from your device', choose: 'Choose images', camera: 'Use camera',
+    fileHint: 'JPG · PNG · WEBP', pasteHint: 'Paste an image with', pasteEnd: '',
+    privacyTitle: 'Private by design', privacyBody: 'ScanMX runs locally in this tab. Your photos are never sent to a server.',
+    localChip: 'PRIVATE BY DEFAULT', howTitle: 'A complete document workflow', howBody: 'Capture, refine and export your documents without an account or an upload.',
+    stepOne: 'Add a page', stepOneBody: 'Drop, browse, use your camera or paste a screenshot.', stepTwo: 'Enhance your document', stepTwoBody: 'Detect document boundaries, correct perspective and reduce uneven lighting.', stepThree: 'Save and share', stepThreeBody: 'Export a multi-page PDF or a high-resolution PNG.',
+    footer: 'Document scanning. Without compromising privacy.',
+    workspace: 'DOCUMENT WORKSPACE', addPages: 'Add pages', page: 'PAGE', pages: 'PAGES',
+    scanPreview: 'Scan preview', editCorners: 'Adjust corners', finishCorners: 'Apply crop',
     findingEdges: 'Finding page edges…', updating: 'Updating scan preview…', detected: 'Page edges found', notDetected: 'Adjust corners manually',
-    autoDetect: 'Find page edges', resetCrop: 'Use full photo', rotate: 'Rotate 90°',
-    enhancement: 'ENHANCEMENT', smartName: 'Smart clean', smartDesc: 'Even out paper tone and lift detail.', colorName: 'Color', colorDesc: 'Keep the natural ink and color.', grayName: 'Grayscale', grayDesc: 'Quiet the color, keep the detail.', bwName: 'Black & white', bwDesc: 'High-contrast, crisp document scan.',
-    paperCleanup: 'Paper cleanup', exposure: 'Exposure', softer: 'Soft', stronger: 'Strong', darker: 'Darker', brighter: 'Brighter',
+    autoDetect: 'Auto-adjust corners', resetCrop: 'Use full photo', rotate: 'Rotate 90°',
+    enhancement: 'ENHANCEMENT', smartName: 'Smart clean', smartDesc: 'Reduce shadows and restore clean, legible pages.', colorName: 'Color', colorDesc: 'Retain color with balanced contrast.', grayName: 'Grayscale', grayDesc: 'Clear detail in neutral gray tones.', bwName: 'Black & white', bwDesc: 'High-contrast text on a white background.',
+    paperCleanup: 'Cleanup strength', exposure: 'Exposure', softer: 'Soft', stronger: 'Strong', darker: 'Darker', brighter: 'Brighter',
     savePdf: 'Export PDF', saveImage: 'Save this page as PNG', exporting: 'Preparing your PDF…',
-    privateNote: 'Nothing leaves this tab', localNote: 'Processed locally · no account · no upload',
-    dropMore: 'Drop more pages or add from your device', emptyTitle: 'Nothing here yet', removePage: 'Remove page',
+    privateNote: 'Your documents stay on this device', localNote: 'Processed locally · no account · no upload',
+    dropMore: 'Add more pages to your document', emptyTitle: 'No documents added', removePage: 'Remove page',
     scanEngineError: 'The offline scan engine could not start in this browser.', openGuide: 'How it works', pasteToast: 'Screenshot pasted from clipboard.',
     addedToast: 'page(s) added to your scan.', imageOnly: 'Choose JPG, PNG, WEBP or another image file.',
     failedExport: 'Could not create the file. Please try again.', failedImport: 'One or more images could not be opened.',
-    pageFallback: 'Page', loading: 'Loading your image…',
+    smartNote: 'Automatically balances uneven lighting and fold shadows. Deep creases, glare and curved text may still need a new photo.', dropRelease: 'Release to add documents', originalAlt: 'Original photo with adjustable document corners', previewAlt: 'Processed document preview', moreExport: 'More export options', smartBadge: 'SMART CLEAN', perspectiveLabel: 'Perspective correction',
+    pageFallback: 'Page', loading: 'Opening your document…',
   },
   bn: {
     studio: 'ডকুমেন্ট স্টুডিও', local: 'সম্পূর্ণ আপনার ডিভাইসে', engineLoading: 'স্ক্যানার প্রস্তুত হচ্ছে', engineReady: 'অফলাইন স্ক্যানার প্রস্তুত',
-    heroEyebrow: 'ব্যক্তিগত, ব্রাউজারভিত্তিক স্ক্যানার', heroA: 'যেকোনো পাতাকে', heroB: 'স্ক্যানের মতো বানান।',
+    heroEyebrow: 'ব্যক্তিগত, ব্রাউজারভিত্তিক স্ক্যানার', heroA: 'মানসম্মত স্ক্যান।', heroB: 'সম্পূর্ণ ব্যক্তিগত।',
     heroBody: 'সাধারণ ছবিকে পরিষ্কার, সোজা ডকুমেন্টে রূপ দিন। ক্রপ, পার্সপেক্টিভ ঠিক করা, ছায়া কমানো ও এক্সপোর্ট—সবই এই ডিভাইসে।',
     noAccount: 'অ্যাকাউন্ট লাগে না', noUploads: 'কোনো আপলোড নেই', noPageCap: 'পাতার সীমা নেই', processedHere: 'এই ডিভাইসেই প্রসেস হয়',
-    threeSteps: 'তিন ধাপে ScanMX', makeScanReady: 'স্ক্যানের মতো পরিষ্কার করুন', pageShape: 'পাতার আকার', dragHandles: 'উজ্জ্বল কোণাগুলো টেনে পাতার সঙ্গে মেলান', localEngine: 'অফলাইন স্ক্যান ইঞ্জিন',
+    threeSteps: 'তিন ধাপে ScanMX', makeScanReady: 'ডকুমেন্ট উন্নত করুন', pageShape: 'পাতার আকার', dragHandles: 'উজ্জ্বল কোণাগুলো টেনে পাতার সঙ্গে মেলান', localEngine: 'অফলাইন স্ক্যান ইঞ্জিন',
     dropTitle: 'এখানে ছবি ছেড়ে দিন', dropBody: 'অথবা ডিভাইস থেকে ছবি বেছে নিন', choose: 'ছবি বাছাই করুন', camera: 'ক্যামেরা খুলুন',
     fileHint: 'JPG · PNG · WEBP', pasteHint: 'স্ক্রিনশট পেস্ট করতে চাপুন', pasteEnd: '',
     privacyTitle: 'আপনার ছবি আপনার কাছেই', privacyBody: 'ScanMX এই ট্যাবেই কাজ করে। আপনার ছবি কোনো সার্ভারে পাঠানো হয় না।',
     localChip: 'শুরু থেকেই ব্যক্তিগত', howTitle: 'ছবি থেকে প্রস্তুত স্ক্যান', howBody: 'প্রথম পাতা থেকে PDF—সহজ, সম্পূর্ণ লোকাল একটি কাজের ধারা।',
     stepOne: 'পাতা যোগ করুন', stepOneBody: 'ছবি টেনে আনুন, বাছাই করুন, ক্যামেরা ব্যবহার করুন বা স্ক্রিনশট পেস্ট করুন।', stepTwo: 'স্ক্যানের মতো করুন', stepTwoBody: 'পাতা অটো-ক্রপ, সোজা ও পরিষ্কার করুন; লেখার ডিটেইল বাড়ান।', stepThree: 'সেভ ও শেয়ার করুন', stepThreeBody: 'পরিষ্কার PDF ডাউনলোড করুন, অথবা পাতাটি ছবি হিসেবে সেভ করুন।',
     footer: 'গুরুত্বপূর্ণ পাতাগুলো যত্নে রাখুন।',
-    workspace: 'আপনার স্ক্যান ডেস্ক', addPages: 'পাতা যোগ', page: 'পাতা', pages: 'পাতা',
+    workspace: 'ডকুমেন্ট ওয়ার্কস্পেস', addPages: 'পাতা যোগ', page: 'পাতা', pages: 'পাতা',
     scanPreview: 'স্ক্যান প্রিভিউ', editCorners: 'কোণা ঠিক করুন', finishCorners: 'সম্পন্ন',
     findingEdges: 'পাতার সীমানা খোঁজা হচ্ছে…', updating: 'স্ক্যান প্রিভিউ আপডেট হচ্ছে…', detected: 'পাতার সীমানা পাওয়া গেছে', notDetected: 'কোণা নিজে ঠিক করুন',
-    autoDetect: 'পাতার সীমানা খুঁজুন', resetCrop: 'পুরো ছবি ব্যবহার', rotate: '৯০° ঘোরান',
-    enhancement: 'এনহ্যান্সমেন্ট', smartName: 'স্মার্ট ক্লিন', smartDesc: 'কাগজের টোন ঠিক করে লেখা স্পষ্ট করুন।', colorName: 'রঙিন', colorDesc: 'স্বাভাবিক কালি ও রঙ রাখুন।', grayName: 'গ্রেস্কেল', grayDesc: 'রঙ কমিয়ে ডিটেইল রাখুন।', bwName: 'সাদা-কালো', bwDesc: 'স্পষ্ট, হাই-কনট্রাস্ট স্ক্যান।',
-    paperCleanup: 'কাগজ পরিষ্কার', exposure: 'আলো', softer: 'কম', stronger: 'বেশি', darker: 'গাঢ়', brighter: 'উজ্জ্বল',
+    autoDetect: 'কোণা স্বয়ংক্রিয়ভাবে ঠিক করুন', resetCrop: 'পুরো ছবি ব্যবহার', rotate: '৯০° ঘোরান',
+    enhancement: 'এনহ্যান্সমেন্ট', smartName: 'স্মার্ট ক্লিন', smartDesc: 'ছায়া কমিয়ে কাগজের টোন ও লেখার স্বচ্ছতা উন্নত করুন।', colorName: 'রঙিন', colorDesc: 'স্বাভাবিক কালি ও রঙ রাখুন।', grayName: 'গ্রেস্কেল', grayDesc: 'রঙ কমিয়ে ডিটেইল রাখুন।', bwName: 'সাদা-কালো', bwDesc: 'স্পষ্ট, হাই-কনট্রাস্ট স্ক্যান।',
+    paperCleanup: 'পরিষ্কারের মাত্রা', exposure: 'আলো', softer: 'কম', stronger: 'বেশি', darker: 'গাঢ়', brighter: 'উজ্জ্বল',
     savePdf: 'PDF এক্সপোর্ট', saveImage: 'পাতাটি PNG হিসেবে সেভ', exporting: 'PDF তৈরি হচ্ছে…',
     privateNote: 'এই ট্যাবের বাইরে কিছু যায় না', localNote: 'ডিভাইসেই প্রসেস · অ্যাকাউন্ট নেই · আপলোড নেই',
     dropMore: 'আরও পাতা টেনে আনুন বা ডিভাইস থেকে যোগ করুন', emptyTitle: 'এখনও কোনো পাতা নেই', removePage: 'পাতা সরান',
     scanEngineError: 'এই ব্রাউজারে অফলাইন স্ক্যানার চালু করা যায়নি।', openGuide: 'ব্যবহারবিধি', pasteToast: 'ক্লিপবোর্ড থেকে স্ক্রিনশট পেস্ট হয়েছে।',
     addedToast: 'টি পাতা স্ক্যানে যোগ হয়েছে।', imageOnly: 'JPG, PNG, WEBP বা অন্য কোনো ছবি বেছে নিন।',
     failedExport: 'ফাইল তৈরি করা যায়নি। আবার চেষ্টা করুন।', failedImport: 'এক বা একাধিক ছবি খোলা যায়নি।',
+    smartNote: 'অসম আলো ও ভাঁজের ছায়া স্বয়ংক্রিয়ভাবে কমায়। গভীর ভাঁজ, আলোর ঝলক বা বাঁকানো লেখার জন্য নতুন ছবি প্রয়োজন হতে পারে।', dropRelease: 'ডকুমেন্ট যোগ করতে ছেড়ে দিন', originalAlt: 'কোণা সমন্বয়ের জন্য মূল ছবি', previewAlt: 'প্রসেস করা ডকুমেন্টের প্রিভিউ', moreExport: 'এক্সপোর্টের আরও বিকল্প', smartBadge: 'স্বয়ংক্রিয় এনহ্যান্সমেন্ট', perspectiveLabel: 'পার্সপেক্টিভ সংশোধন',
     pageFallback: 'পাতা', loading: 'ছবি লোড হচ্ছে…',
   },
 };
@@ -148,9 +152,9 @@ function BrandMark() {
 
 function readSavedLanguage() {
   try {
-    return localStorage.getItem('scanmx-language') === 'en' ? 'en' : 'bn';
+    return localStorage.getItem('scanmx-language') === 'bn' ? 'bn' : 'en';
   } catch {
-    return 'bn';
+    return 'en';
   }
 }
 
@@ -239,7 +243,9 @@ function ImageStage({ page, cropMode, onCornersChange, labels }) {
 
   const startDrag = (event) => {
     if (!cropMode) return;
-    const index = Number(event.target.getAttribute('data-corner'));
+    const handle = event.target.closest('[data-corner]');
+    if (!handle) return;
+    const index = Number(handle.getAttribute('data-corner'));
     if (!Number.isInteger(index) || index < 0 || index > 3) return;
     event.preventDefault();
     dragIndex.current = index;
@@ -255,7 +261,7 @@ function ImageStage({ page, cropMode, onCornersChange, labels }) {
       x: Math.max(0, Math.min(page.width, point.x)),
       y: Math.max(0, Math.min(page.height, point.y)),
     };
-    onCornersChange(next);
+    if (isValidQuad(next)) onCornersChange(next);
   };
 
   const endDrag = (event) => {
@@ -271,7 +277,7 @@ function ImageStage({ page, cropMode, onCornersChange, labels }) {
         <div className="stage-empty"><CircularProgress size={22} /><span>{labels.loading}</span></div>
       ) : (
         <div className="preview-frame" style={{ left: frame.left, top: frame.top, width: frame.width, height: frame.height }}>
-          <img src={visibleUrl} alt={cropMode ? 'Original document photo with adjustable crop corners' : 'Enhanced document scan preview'} draggable="false" />
+          <img src={visibleUrl} alt={cropMode ? labels.originalAlt : labels.previewAlt} draggable="false" />
           {cropMode && (
             <svg
               ref={svgRef}
@@ -331,8 +337,8 @@ function EmptyState({ copy, engineStatus, onChoose, onCamera, dropActive }) {
               <div className="paper-row paper-row-wide" /><div className="paper-row paper-row-short" />
               <div className="paper-stamp">MX</div>
             </div>
-            <div className="visual-label"><AutoAwesomeRounded />SMART SCAN</div>
-            <div className="visual-caption"><span /> Perspective corrected <CheckCircleRounded /></div>
+            <div className="visual-label"><AutoAwesomeRounded />{copy.smartBadge}</div>
+            <div className="visual-caption"><span /> {copy.perspectiveLabel} <CheckCircleRounded /></div>
           </div>
         </div>
 
@@ -355,7 +361,7 @@ function EmptyState({ copy, engineStatus, onChoose, onCamera, dropActive }) {
             </div>
             <div className="file-types"><span>{copy.fileHint}</span><span className="file-type-dot" /><span>{copy.processedHere}</span></div>
             <div className="paste-callout"><ContentPasteGoRounded /><span>{copy.pasteHint} <kbd>Ctrl</kbd><b>+</b><kbd>V</kbd> {copy.pasteEnd}</span></div>
-            {dropActive && <div className="drop-active-note"><UploadFileRounded />Release to add your pages</div>}
+            {dropActive && <div className="drop-active-note"><UploadFileRounded />{copy.dropRelease}</div>}
           </Paper>
           <Paper elevation={0} className="privacy-card">
             <div className="privacy-icon"><ShieldRounded /></div>
@@ -449,7 +455,7 @@ function App() {
           id, file, url, name: file.name || `ScanMX-${Date.now()}.png`, width, height,
           corners: getFullFrame(width, height),
           detected: false, detectionAttempted: false, confidence: 0,
-          mode: 'smart', rotation: 0, settings: { cleanup: 58, exposure: 0 },
+          mode: 'smart', rotation: 0, settings: { cleanup: 80, exposure: 0 },
           editVersion: 0, previewVersion: -1, previewUrl: null, previewWidth: 0, previewHeight: 0,
           isProcessing: true, processError: '',
         };
@@ -550,6 +556,7 @@ function App() {
   }, [activePage?.id, activePage?.editVersion, engineStatus]);
 
   useEffect(() => {
+    document.documentElement.lang = language;
     try { localStorage.setItem('scanmx-language', language); } catch { /* local file mode may block storage */ }
   }, [language]);
 
@@ -735,7 +742,7 @@ function App() {
                         <ImageStage
                           page={activePage}
                           cropMode={cropMode}
-                          onCornersChange={(corners) => updateActive({ corners })}
+                          onCornersChange={(corners) => updateActive({ corners, detectionAttempted: true, detected: false })}
                           labels={copy}
                         />
                         {activePage.isProcessing && !activePage.previewUrl && (
@@ -784,8 +791,9 @@ function App() {
                         ))}
                       </div>
 
+                      {activePage.mode === 'smart' && <Typography className="smart-mode-note">{copy.smartNote}</Typography>}
                       <Divider className="settings-divider" />
-                      {activePage.mode === 'bw' && (
+                      {['smart', 'bw'].includes(activePage.mode) && (
                         <div className="slider-control">
                           <div className="slider-label-row"><label htmlFor="paper-cleanup">{copy.paperCleanup}</label><span>{activePage.settings.cleanup}%</span></div>
                           <Slider id="paper-cleanup" size="small" min={0} max={100} value={activePage.settings.cleanup} onChange={(_, value) => updateActive({ settings: { ...activePage.settings, cleanup: value } })} aria-label={copy.paperCleanup} />
@@ -809,7 +817,7 @@ function App() {
                             {exporting ? copy.exporting : copy.savePdf}
                           </Button>
                           <Tooltip title={copy.saveImage}>
-                            <IconButton className="export-more" aria-label="More export options" onClick={(event) => setMenuAnchor(event.currentTarget)} disabled={engineStatus !== 'ready' || exporting}><MoreHorizRounded /></IconButton>
+                            <IconButton className="export-more" aria-label={copy.moreExport} onClick={(event) => setMenuAnchor(event.currentTarget)} disabled={engineStatus !== 'ready' || exporting}><MoreHorizRounded /></IconButton>
                           </Tooltip>
                         </div>
                         <Menu anchorEl={menuAnchor} open={Boolean(menuAnchor)} onClose={() => setMenuAnchor(null)} PaperProps={{ className: 'export-menu' }}>

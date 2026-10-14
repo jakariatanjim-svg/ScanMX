@@ -1,4 +1,5 @@
 import { defineConfig } from 'vite';
+import { readFileSync } from 'node:fs';
 import react from '@vitejs/plugin-react';
 
 function escapeRegExp(value) {
@@ -9,6 +10,11 @@ function inlineStandaloneAssets() {
   return {
     name: 'scanmx-inline-standalone-assets',
     enforce: 'post',
+    transformIndexHtml(html) {
+      // The font is embedded, so carry its redistribution notice in the HTML too.
+      const fontLicense = readFileSync(new URL('./node_modules/@fontsource-variable/noto-sans-bengali/LICENSE', import.meta.url), 'utf8');
+      return html.replace('</head>', `<!-- Noto Sans Bengali font license\n${fontLicense}\n-->\n</head>`);
+    },
     generateBundle(_options, bundle) {
       const htmlFiles = Object.keys(bundle).filter((name) => /\.html?$/i.test(name));
       const scriptFiles = Object.keys(bundle).filter((name) => /\.[mc]?js$/i.test(name));
