@@ -51,7 +51,13 @@ rng = np.random.default_rng(SEED)
 random.seed(SEED)
 
 
-def render_page():
+# Text scales: the same page content at different pixel sizes. Real phone photos have
+# text (and blur) several times larger than the smallest training pages, so the model
+# must see all of them.
+TEXT_SCALES = [1.0, 1.5, 2.0, 2.5, 3.0]
+
+
+def render_page(scale=1.0):
     """A crisp page of random text lines. Some pages are blank paper."""
     paper = rng.uniform(0.86, 1.0)
     img = Image.new("L", (PAGE, PAGE), int(paper * 255))
@@ -59,11 +65,11 @@ def render_page():
         return np.asarray(img, np.float32) / 255.0
     draw = ImageDraw.Draw(img)
     ink = rng.uniform(0.0, 0.3)
-    y = int(rng.integers(4, 12))
+    y = int(rng.integers(4, 12) * scale)
     while y < PAGE - 10:
-        size = int(rng.integers(9, 20))
+        size = int(rng.integers(9, 20) * scale)
         font = ImageFont.truetype(random.choice(FONTS), size)
-        x = int(rng.integers(3, 12))
+        x = int(rng.integers(3, 12) * scale)
         while x < PAGE - 8:
             word = "".join(random.choice(ALPHABET) for _ in range(random.randint(1, 7)))
             draw.text((x, y), word, font=font, fill=int(ink * 255))
@@ -72,15 +78,15 @@ def render_page():
     return np.asarray(img, np.float32) / 255.0
 
 
-def degrade(clean):
-    """Make a low-quality version of a crisp page."""
+def degrade(clean, scale=1.0):
+    """Make a low-quality version of a crisp page. Blur grows with the text scale."""
     h, w = clean.shape
     img = Image.fromarray((clean * 255).astype(np.uint8))
-    scale = rng.uniform(1.0, 1.8)
-    if scale > 1.05:
-        small = img.resize((max(8, round(w / scale)), max(8, round(h / scale))), Image.BILINEAR)
+    resample = rng.uniform(1.0, 1.8)
+    if resample > 1.05:
+        small = img.resize((max(8, round(w / resample)), max(8, round(h / resample))), Image.BILINEAR)
         img = small.resize((w, h), Image.BICUBIC)
-    img = img.filter(ImageFilter.GaussianBlur(rng.uniform(0.3, 1.5)))
+    img = img.filter(ImageFilter.GaussianBlur(rng.uniform(0.3, 1.5) * scale))
     x = np.asarray(img, np.float32) / 255.0
     paper = float(clean.max())
     x = x * (1 - rng.uniform(0, 0.3)) + paper * rng.uniform(0, 0.25)  # faded ink
@@ -96,8 +102,9 @@ def make_dataset():
     """Training pairs are sharpened crops; raw degraded crops are kept for honest validation."""
     inputs, targets, raws = [], [], []
     for _ in range(PAGES):
-        clean = render_page()
-        raw_page = degrade(clean)
+        scale = float(rng.choice(TEXT_SCALES))
+        clean = render_page(scale)
+        raw_page = degrade(clean, scale)
         sharp_page = sharpen(raw_page)
         for _ in range(CROPS_PER_PAGE):
             y = int(rng.integers(0, PAGE - PATCH))
