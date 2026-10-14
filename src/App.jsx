@@ -215,7 +215,15 @@ function ImageStage({ page, cropMode, onCornersChange, labels }) {
   const stageRef = useRef(null);
   const svgRef = useRef(null);
   const dragIndex = useRef(null);
+  const draftRef = useRef(null);
+  const [draftCorners, setDraftCorners] = useState(null);
   const [frame, setFrame] = useState({ left: 0, top: 0, width: 0, height: 0, scale: 1 });
+  const corners = draftCorners || page.corners;
+
+  useEffect(() => {
+    draftRef.current = null;
+    setDraftCorners(null);
+  }, [page.id]);
   const visibleUrl = cropMode ? page.url : (page.previewUrl || page.url);
   const visibleWidth = cropMode ? page.width : (page.previewWidth || page.width);
   const visibleHeight = cropMode ? page.height : (page.previewHeight || page.height);
@@ -262,21 +270,30 @@ function ImageStage({ page, cropMode, onCornersChange, labels }) {
     if (dragIndex.current === null) return;
     const point = svgPoint(event);
     if (!point) return;
-    const next = page.corners.map((corner) => ({ ...corner }));
+    const next = (draftRef.current || page.corners).map((corner) => ({ ...corner }));
     next[dragIndex.current] = {
       x: Math.max(0, Math.min(page.width, point.x)),
       y: Math.max(0, Math.min(page.height, point.y)),
     };
-    if (isValidQuad(next)) onCornersChange(next);
+    if (isValidQuad(next)) {
+      draftRef.current = next;
+      setDraftCorners(next);
+    }
   };
 
   const endDrag = (event) => {
     dragIndex.current = null;
+    if (draftRef.current) {
+      // One committed edit per drag, so the page is re-processed once, not on every move.
+      onCornersChange(draftRef.current);
+      draftRef.current = null;
+      setDraftCorners(null);
+    }
     if (event.currentTarget.hasPointerCapture(event.pointerId)) event.currentTarget.releasePointerCapture(event.pointerId);
   };
 
   const handleRadius = frame.scale ? Math.max(9, Math.min(96, 13 / frame.scale)) : 20;
-  const cornerString = cropMode ? page.corners.map((point) => `${point.x},${point.y}`).join(' ') : '';
+  const cornerString = cropMode ? corners.map((point) => `${point.x},${point.y}`).join(' ') : '';
   return (
     <div className={`preview-stage ${cropMode ? 'preview-stage-editing' : ''}`} ref={stageRef}>
       {!visibleWidth || !visibleHeight ? (
@@ -296,8 +313,8 @@ function ImageStage({ page, cropMode, onCornersChange, labels }) {
               onPointerCancel={endDrag}
             >
               <polygon points={cornerString} className="crop-area" />
-              <polyline points={`${cornerString} ${page.corners[0].x},${page.corners[0].y}`} className="crop-outline" />
-              {page.corners.map((corner, index) => (
+              <polyline points={`${cornerString} ${corners[0].x},${corners[0].y}`} className="crop-outline" />
+              {corners.map((corner, index) => (
                 <g key={index} className="crop-handle" data-corner={index}>
                   <circle cx={corner.x} cy={corner.y} r={handleRadius * 1.5} className="crop-handle-halo" data-corner={index} />
                   <circle cx={corner.x} cy={corner.y} r={handleRadius * 0.56} className="crop-handle-core" data-corner={index} />
@@ -501,12 +518,24 @@ function App() {
 
   useEffect(() => {
     if (!activePage || engineStatus !== 'ready') return undefined;
+    // While the crop handles are being moved the stage shows the original photo,
+    // so no preview work is needed; it runs again when cropping is finished.
+    if (cropMode) {
+      // A run cancelled by entering crop mode must not leave the spinner on.
+      if (activePage.isProcessing) {
+        setPages((previous) => previous.map((page) => page.id === activePage.id ? { ...page, isProcessing: false } : page));
+      }
+      return undefined;
+    }
     if (activePage.previewUrl && activePage.previewVersion === activePage.editVersion) return undefined;
     let cancelled = false;
     const id = activePage.id;
     const targetVersion = activePage.editVersion;
     const task = async () => {
       setPages((previous) => previous.map((page) => page.id === id ? { ...page, isProcessing: true, processError: '' } : page));
+      // Let the browser paint the spinner before the heavy image work starts.
+      await new Promise((resolve) => window.requestAnimationFrame(() => window.setTimeout(resolve, 0)));
+      if (cancelled) return;
       let image = null;
       try {
         image = await loadImage(activePage.url);
@@ -526,7 +555,7 @@ function App() {
           mode: activePage.mode,
           rotation: activePage.rotation,
           settings: activePage.settings,
-          maxEdge: 1700,
+          maxEdge: 1000,
         }, cv);
         releaseImage(image);
         image = null;
@@ -559,7 +588,7 @@ function App() {
       cancelled = true;
       window.clearTimeout(timer);
     };
-  }, [activePage?.id, activePage?.editVersion, engineStatus]);
+  }, [activePage?.id, activePage?.editVersion, engineStatus, cropMode]);
 
   useEffect(() => {
     document.documentElement.lang = language;

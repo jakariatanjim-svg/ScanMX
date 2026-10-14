@@ -5,6 +5,8 @@
 ## What it does
 
 - Automatically finds document edges, crops the page, straightens perspective, and lets you adjust the four corners by hand.
+- Smart clean removes folds, shadows, uneven light and paper tint. Choose **Keep lines** (default) or **Text only**, which also erases ruled lines and table borders.
+- Straighten curved or wavy text caused by folds or a curled page. Coloured documents such as ID cards keep their colour.
 - **Smart clean** (the default) removes fold shadows, uneven lighting and paper tint automatically, leaving a clean white page while keeping text and colored ink. Cleanup strength and exposure remain adjustable. Color, Grayscale and Black & white modes are also available.
 - Supports multiple pages, rotation, camera capture on supported phones, drag-and-drop, and pasting a screenshot with **Ctrl+V** (or **⌘+V** on Mac).
 - Exports a multi-page PDF or an individual page as a PNG image.

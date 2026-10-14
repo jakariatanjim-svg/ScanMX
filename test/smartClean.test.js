@@ -101,7 +101,8 @@ test('warm paper tint is neutralised to white while colored ink keeps its hue', 
 function notebookPage() {
   const page = new cv.Mat(400, 500, cv.CV_8UC4, new cv.Scalar(240, 240, 240, 255));
   for (let y = 60; y < 360; y += 50) cv.line(page, new cv.Point(40, y), new cv.Point(460, y), new cv.Scalar(195, 195, 195, 255), 2);
-  cv.line(page, new cv.Point(80, 205), new cv.Point(420, 205), new cv.Scalar(30, 30, 30, 255), 6);
+  // Short handwriting-like strokes: too short to be a ruled line.
+  for (let x = 80; x < 420; x += 60) cv.line(page, new cv.Point(x, 205), new cv.Point(x + 20, 205), new cv.Scalar(30, 30, 30, 255), 6);
   return page;
 }
 
@@ -113,7 +114,7 @@ test('ruled lines are kept by default and erased in text-only mode, while dark t
     const lineAt = (mat, x, y) => mat.data[(y * mat.cols + x) * 4];
     assert.ok(lineAt(kept, 250, 110) < 225, `Ruled line should stay visible: ${lineAt(kept, 250, 110)}`);
     assert.ok(lineAt(textOnly, 250, 110) >= 245, `Ruled line should be removed: ${lineAt(textOnly, 250, 110)}`);
-    assert.ok(lineAt(textOnly, 250, 205) < 60, `Dark text should survive: ${lineAt(textOnly, 250, 205)}`);
+    assert.ok(lineAt(textOnly, 90, 205) < 60, `Dark text should survive: ${lineAt(textOnly, 90, 205)}`);
   } finally {
     input.delete(); kept.delete(); textOnly.delete();
   }
@@ -123,7 +124,35 @@ test('text is darker in smart clean than the raw stroke tone', () => {
   const input = notebookPage();
   const output = smartClean(cv, input, { cleanup: 100 });
   try {
-    assert.ok(output.data[(205 * output.cols + 250) * 4] < 20, 'Heavy ink should become near black');
+    assert.ok(output.data[(205 * output.cols + 210) * 4] < 20, 'Heavy ink should become near black');
+  } finally {
+    input.delete(); output.delete();
+  }
+});
+
+test('text-only mode also erases a dark table border, and keep-lines leaves it alone', () => {
+  const input = new cv.Mat(400, 500, cv.CV_8UC4, new cv.Scalar(240, 240, 240, 255));
+  cv.line(input, new cv.Point(40, 200), new cv.Point(460, 200), new cv.Scalar(25, 25, 25, 255), 3);
+  const kept = smartClean(cv, input, { cleanup: 100, keepLines: true });
+  const textOnly = smartClean(cv, input, { cleanup: 100, keepLines: false });
+  try {
+    assert.ok(kept.data[(200 * kept.cols + 250) * 4] < 60, 'Keep lines should leave the table border dark');
+    assert.ok(textOnly.data[(200 * textOnly.cols + 250) * 4] >= 245, 'Text only should erase the table border');
+  } finally {
+    input.delete(); kept.delete(); textOnly.delete();
+  }
+});
+
+test('coloured documents such as ID cards keep their colour instead of turning grey or washed out', () => {
+  const input = new cv.Mat(500, 400, cv.CV_8UC4, new cv.Scalar(70, 70, 70, 255));
+  cv.rectangle(input, new cv.Point(40, 60), new cv.Point(360, 440), new cv.Scalar(60, 90, 200, 255), -1);
+  cv.rectangle(input, new cv.Point(60, 90), new cv.Point(200, 180), new cv.Scalar(235, 235, 235, 255), -1);
+  const output = smartClean(cv, input, { cleanup: 80 });
+  try {
+    const at = (x, y) => [0, 1, 2].map((c) => output.data[(y * output.cols + x) * 4 + c]);
+    const [r, g, b] = at(300, 350);
+    assert.ok(b - r > 100, `Blue card colour should stay blue: ${r},${g},${b}`);
+    assert.ok(Math.max(r, g, b) - Math.min(r, g, b) > 0.8 * 130, 'Card colour should not wash out');
   } finally {
     input.delete(); output.delete();
   }

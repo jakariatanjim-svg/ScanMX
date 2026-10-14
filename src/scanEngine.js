@@ -226,6 +226,98 @@ function contourCandidates(cv, source, minArea) {
   return candidates;
 }
 
+/**
+ * A page that already fills the frame (a flat scan or a tight crop) has paper at
+ * every border and no dark background. Its border is the page edge, so the
+ * whole frame is the answer; table rules or lines inside it must not be used.
+ */
+function inspectFrame(data, width, height) {
+  const ring = Math.max(4, Math.round(Math.min(width, height) * 0.02));
+  const borderValues = [];
+  const innerValues = [];
+  let innerInk = 0;
+  let innerCount = 0;
+  for (let y = 0; y < height; y += 1) {
+    for (let x = 0; x < width; x += 1) {
+      const value = data[y * width + x];
+      const onRing = x < ring || y < ring || x >= width - ring || y >= height - ring;
+      if (onRing) {
+        borderValues.push(value);
+      } else {
+        innerCount += 1;
+        if (value <= 110) innerInk += 1;
+        if ((x + y) % 7 === 0) innerValues.push(value);
+      }
+    }
+  }
+  const median = (values) => {
+    const sorted = Uint8Array.from(values).sort();
+    return sorted[sorted.length >> 1];
+  };
+  const borderMedian = median(borderValues);
+  const innerMedian = median(innerValues);
+  const borderDark = borderValues.filter((value) => value <= 110).length / borderValues.length;
+  // Paper at the border that matches the paper inside (same tone, no dark desk).
+  // A light desk around a grey page differs from the page inside, so it is excluded.
+  if (borderMedian < 170 || Math.abs(borderMedian - innerMedian) > 12 || borderDark > 0.03) return null;
+  const inkRatio = innerInk / Math.max(1, innerCount);
+  return {
+    corners: [{ x: 0, y: 0 }, { x: width, y: 0 }, { x: width, y: height }, { x: 0, y: height }],
+    detected: inkRatio >= 0.002 && inkRatio <= 0.4,
+    confidence: 1,
+  };
+}
+
+/**
+ * Average brightness step across the four sides of a candidate page: the inside
+ * of a real page edge is clearly different from the outside. Table rules inside a
+ * white page have the same tone on both sides, so they score near zero.
+ */
+function sideContrast(data, width, height, points) {
+  const sample = (x, y) => {
+    const px = Math.round(x);
+    const py = Math.round(y);
+    if (px < 0 || py < 0 || px >= width || py >= height) return null;
+    return data[py * width + px];
+  };
+  const centerX = points.reduce((sum, point) => sum + point.x, 0) / 4;
+  const centerY = points.reduce((sum, point) => sum + point.y, 0) / 4;
+  let total = 0;
+  let sides = 0;
+  for (let index = 0; index < 4; index += 1) {
+    const start = points[index];
+    const end = points[(index + 1) % 4];
+    const length = Math.hypot(end.x - start.x, end.y - start.y);
+    if (length < 8) continue;
+    const ux = (end.x - start.x) / length;
+    const uy = (end.y - start.y) / length;
+    let nx = -uy;
+    let ny = ux;
+    const midX = (start.x + end.x) / 2;
+    const midY = (start.y + end.y) / 2;
+    if ((midX - centerX) * nx + (midY - centerY) * ny < 0) {
+      nx = -nx;
+      ny = -ny;
+    }
+    let sum = 0;
+    let count = 0;
+    for (let t = 0.15; t <= 0.851; t += 0.1) {
+      const px = start.x + ux * length * t;
+      const py = start.y + uy * length * t;
+      const inside = sample(px - nx * 5, py - ny * 5);
+      const outside = sample(px + nx * 5, py + ny * 5);
+      if (inside === null || outside === null) continue;
+      sum += inside - outside;
+      count += 1;
+    }
+    if (count >= 4) {
+      total += sum / count;
+      sides += 1;
+    }
+  }
+  return sides ? total / sides : null;
+}
+
 /** Detect on a bounded RGBA image. No DOM dependency, so fixtures can test the real engine. */
 export function detectPageMat(source, cv) {
   const width = source.cols;
@@ -247,6 +339,8 @@ export function detectPageMat(source, cv) {
     const kernel = cv.getStructuringElement(cv.MORPH_RECT, new cv.Size(5, 5));
     resources.push(kernel);
     cv.cvtColor(source, gray, cv.COLOR_RGBA2GRAY);
+    const framed = inspectFrame(gray.data, width, height);
+    if (framed) return framed;
     cv.GaussianBlur(gray, blurred, new cv.Size(5, 5), 0);
     const clahe = new cv.CLAHE(2, new cv.Size(8, 8));
     resources.push(clahe);
@@ -275,6 +369,8 @@ export function detectPageMat(source, cv) {
       const border = Math.max(3, Math.min(width, height) * 0.012);
       const touches = points.filter((p) => p.x <= border || p.y <= border || p.x >= width - 1 - border || p.y >= height - 1 - border).length;
       if (touches >= 3) return false;
+      const contrast = sideContrast(gray.data, width, height, points);
+      if (contrast !== null && Math.abs(contrast) < 10) return false;
       return points.every((point, i) => {
         const before = points[(i + 3) % 4];
         const after = points[(i + 1) % 4];
@@ -285,7 +381,7 @@ export function detectPageMat(source, cv) {
       });
     }).map((candidate) => ({
       ...candidate,
-      score: candidate.area / totalArea * Math.min(candidate.ratio, 1 / candidate.ratio) * (candidate.penalty || 1),
+      score: candidate.area / totalArea * Math.min(candidate.ratio, 1 / candidate.ratio) * (candidate.penalty || 1) * Math.min(1, Math.abs(sideContrast(gray.data, width, height, candidate.points) ?? 40) / 40),
     })).sort((a, b) => b.score - a.score);
 
     const best = usable[0];
