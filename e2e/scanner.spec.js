@@ -58,9 +58,8 @@ test.beforeEach(async ({ page, context }) => {
     });
   }
   await page.goto(appUrl);
-  // Default language is Bengali; also exercise switching the interface to English.
+  // A fresh session must default to English.
   await expect(page.getByRole('button', { name: 'Switch language' })).toBeVisible();
-  await page.getByRole('button', { name: 'Switch language' }).click();
   await expect(page.getByText('Offline scanner ready', { exact: true })).toBeVisible();
 });
 
@@ -71,7 +70,7 @@ test.afterEach(() => {
 
 test('standalone HTML renders and starts the scanner without a network connection', async ({ page }) => {
   await expect(page.getByRole('button', { name: 'Choose images', exact: true })).toBeVisible();
-  await expect(page.getByRole('heading', { level: 1 })).toContainText('Make every page');
+  await expect(page.getByRole('heading', { level: 1 })).toContainText('Professional scans.');
 });
 
 test('all enhancements produce previews and a rotated, non-blank PNG', async ({ page }) => {
@@ -151,6 +150,65 @@ test('crop overlay only drags corners when a handle is grabbed', async ({ page }
   await page.mouse.move(handle.x + 25, handle.y + 25, { steps: 3 });
   await page.mouse.up();
   await expect(outline).not.toHaveAttribute('points', original);
-  await page.getByRole('button', { name: 'Done adjusting', exact: true }).click();
+  await page.getByRole('button', { name: 'Apply crop', exact: true }).click();
   await waitForPreview(page);
+});
+
+
+test('English is the default, Bengali is toggleable, and the preference persists', async ({ page }) => {
+  await expect(page.locator('html')).toHaveAttribute('lang', 'en');
+  await expect(page.getByRole('button', { name: 'Switch language' })).toHaveText('বাংলা');
+  await page.getByRole('button', { name: 'Switch language' }).click();
+  await expect(page.locator('html')).toHaveAttribute('lang', 'bn');
+  await expect(page.getByRole('button', { name: 'ছবি বাছাই করুন', exact: true })).toBeVisible();
+  const fonts = await page.evaluate(async () => {
+    const loaded = await document.fonts.load('16px "Noto Sans Bengali Variable"', 'বাংলা');
+    return loaded.map((font) => font.status);
+  });
+  expect(fonts).toEqual(['loaded']);
+  await page.reload();
+  await expect(page.locator('html')).toHaveAttribute('lang', 'bn');
+  await page.getByRole('button', { name: 'Switch language' }).click();
+  await expect(page.getByRole('button', { name: 'Choose images', exact: true })).toBeVisible();
+  await page.reload();
+  await expect(page.locator('html')).toHaveAttribute('lang', 'en');
+});
+
+test('Smart clean exposes cleanup strength and automatic corners are applied on import', async ({ page }) => {
+  await page.locator('input[type=file]').first().setInputFiles(await documentPhoto(page));
+  let oldUrl = await waitForPreview(page);
+  await expect(page.locator('.stage-status')).toContainText('Page edges found');
+  const strength = page.getByRole('slider', { name: 'Cleanup strength' });
+  await expect(strength).toHaveValue('80');
+  await strength.focus();
+  await strength.press('Home');
+  await expect(strength).toHaveValue('0');
+  oldUrl = await waitForPreview(page, oldUrl);
+  await page.getByRole('button', { name: 'Use full photo', exact: true }).click();
+  oldUrl = await waitForPreview(page, oldUrl);
+  await page.getByRole('button', { name: 'Auto-adjust corners', exact: true }).click();
+  await expect(page.locator('.crop-overlay')).toBeVisible();
+  await page.getByRole('button', { name: 'Apply crop', exact: true }).click();
+  await waitForPreview(page, oldUrl);
+  await expect(page.locator('.stage-status')).toContainText('Page edges found');
+});
+
+
+test('mobile layout remains usable and defaults to English when storage is blocked', async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.addInitScript(() => {
+    Object.defineProperty(window, 'localStorage', { get() { throw new Error('Storage disabled'); } });
+  });
+  await page.reload();
+  await expect(page.locator('html')).toHaveAttribute('lang', 'en');
+  await expect(page.getByRole('button', { name: 'Choose images', exact: true })).toBeVisible();
+  await page.getByRole('button', { name: 'Switch language' }).click();
+  await expect(page.locator('html')).toHaveAttribute('lang', 'bn');
+  await page.getByRole('button', { name: 'Switch language' }).click();
+  await page.locator('input[type=file]').first().setInputFiles(await documentPhoto(page));
+  await waitForPreview(page);
+  await page.getByRole('button', { name: 'Adjust corners', exact: true }).click();
+  const overflow = await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth);
+  expect(overflow).toBeLessThanOrEqual(1);
+  await expect(page.getByRole('button', { name: 'Apply crop', exact: true })).toBeVisible();
 });

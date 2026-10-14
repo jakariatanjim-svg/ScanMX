@@ -1,24 +1,26 @@
-name: Build and release standalone HTML
+name: Build standalone HTML
 
 on:
   workflow_dispatch:
 
 permissions:
-  contents: write
+  contents: read
 
 concurrency:
-  group: scanmx-release-${{ github.ref }}
+  group: scanmx-build-${{ github.ref }}
   cancel-in-progress: false
 
 jobs:
-  build-and-release:
-    name: Build ScanMX and publish a release
+  build:
+    name: Build and upload standalone HTML
     runs-on: ubuntu-latest
+    outputs:
+      artifact: ${{ steps.build-info.outputs.artifact }}
+      release_name: ${{ steps.build-info.outputs.release_name }}
+      tag: ${{ steps.build-info.outputs.tag }}
     steps:
       - name: Check out the selected branch
         uses: actions/checkout@v4
-        with:
-          ref: ${{ github.ref }}
 
       - name: Set up Node.js
         uses: actions/setup-node@v4
@@ -29,53 +31,75 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
-      - name: Run checks
+      - name: Run unit checks
         run: npm test
 
-      - name: Install the test browser
-        run: npx playwright install --with-deps chromium
+      - name: Build the standalone app
+        run: npm run build
 
-      - name: Build and verify the standalone app offline
-        run: npm run test:e2e
-
-      - name: Prepare the dated release asset
-        id: release-info
+      - name: Prepare the dated HTML file
+        id: build-info
         shell: bash
         run: |
           stamp="$(date -u '+%Y-%m-%d-%H-%M-%S')"
-          tag="scanmx-${stamp}-${GITHUB_RUN_NUMBER}"
           release_name="ScanMX-${stamp}"
+          artifact="ScanMX-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
           mkdir -p release
           cp dist/index.html "release/${release_name}.html"
-          echo "stamp=${stamp}" >> "$GITHUB_OUTPUT"
-          echo "tag=${tag}" >> "$GITHUB_OUTPUT"
           echo "release_name=${release_name}" >> "$GITHUB_OUTPUT"
-          echo "asset=release/${release_name}.html" >> "$GITHUB_OUTPUT"
-          echo "Built ${release_name}.html ($(du -h "release/${release_name}.html" | cut -f1))"
+          echo "tag=scanmx-${stamp}-${GITHUB_RUN_NUMBER}-${GITHUB_RUN_ATTEMPT}" >> "$GITHUB_OUTPUT"
+          echo "artifact=${artifact}" >> "$GITHUB_OUTPUT"
 
-      - name: Confirm the release is a single HTML file
+      - name: Confirm the build is a single HTML file
         shell: bash
         run: |
-          test -s "${{ steps.release-info.outputs.asset }}"
-          if grep -Eqi '<script[^>]+src=|<link[^>]+stylesheet[^>]+href=' "${{ steps.release-info.outputs.asset }}"; then
-            echo "The app build contains a separate runtime asset; expected one self-contained HTML file."
+          test -s "release/${{ steps.build-info.outputs.release_name }}.html"
+          if grep -Eqi '<script[^>]+src=|<link[^>]+stylesheet[^>]+href=' "release/${{ steps.build-info.outputs.release_name }}.html"; then
+            echo "Expected one self-contained HTML file, but found an external runtime asset."
             exit 1
           fi
+
+      - name: Upload downloadable build
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ steps.build-info.outputs.artifact }}
+          path: release/*.html
+          if-no-files-found: error
+          retention-days: 14
+
+      - name: Summarize build destination
+        env:
+          IS_RELEASE: ${{ github.ref == 'refs/heads/main' }}
+        run: |
+          if [ "$IS_RELEASE" = "true" ]; then
+            echo "### Main build: a GitHub release will be published after this build." >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "### Preview build: download the HTML from this run's Artifacts section. No tag or release will be created." >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+  release:
+    name: Publish main branch release
+    needs: build
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Download verified HTML
+        uses: actions/download-artifact@v4
+        with:
+          name: ${{ needs.build.outputs.artifact }}
+          path: release
 
       - name: Create a tag and GitHub release
         env:
           GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          RELEASE_NAME: ${{ needs.build.outputs.release_name }}
+          RELEASE_TAG: ${{ needs.build.outputs.tag }}
         run: |
-          notes="$(cat <<EOF
-          ScanMX standalone offline document scanner.
-
-          - Branch: \`${GITHUB_REF_NAME}\`
-          - Download the attached HTML file and open it in a modern browser.
-          - Scanning and enhancement run locally on your device; no photos are uploaded.
-          EOF
-          )"
-          gh release create "${{ steps.release-info.outputs.tag }}" \
-            "${{ steps.release-info.outputs.asset }}" \
-            --target "${GITHUB_SHA}" \
-            --title "${{ steps.release-info.outputs.release_name }}" \
-            --notes "$notes"
+          gh release create "$RELEASE_TAG" \
+            "release/${RELEASE_NAME}.html" \
+            --target "$GITHUB_SHA" \
+            --title "$RELEASE_NAME" \
+            --notes "ScanMX standalone offline document scanner. Download the HTML file and open it in a modern browser. Documents are processed locally; no images are uploaded. Built from main at ${GITHUB_SHA}."

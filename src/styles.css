@@ -1,6 +1,16 @@
+/* Embedded in standalone builds: Bengali remains readable without system fonts. */
+@font-face {
+  font-family: 'Noto Sans Bengali Variable';
+  font-style: normal;
+  font-display: swap;
+  font-weight: 100 900;
+  src: url('@fontsource-variable/noto-sans-bengali/files/noto-sans-bengali-bengali-wght-normal.woff2') format('woff2');
+  unicode-range: U+0951-0952,U+0964-0965,U+0980-09FE,U+1CD0,U+1CD2,U+1CD5-1CD6,U+1CD8,U+1CE1,U+1CEA,U+1CED,U+1CF2,U+1CF5-1CF7,U+200C-200D,U+20B9,U+25CC,U+A8F1;
+}
+
 :root {
   color-scheme: dark;
-  font-family: Inter, "Hind Siliguri", "Noto Sans Bengali", "Nirmala UI", system-ui, sans-serif;
+  font-family: Inter, "Hind Siliguri", "Noto Sans Bengali Variable", "Nirmala UI", system-ui, sans-serif;
   font-synthesis: none;
   text-rendering: optimizeLegibility;
   -webkit-font-smoothing: antialiased;
@@ -270,7 +280,7 @@ kbd { display: inline-grid; place-items: center; min-width: 20px; height: 19px; 
 .engine-error.MuiAlert-root { margin-bottom: 13px; }
 .snackbar-alert.MuiAlert-root { border: 1px solid rgba(255,255,255,.13); box-shadow: 0 8px 30px rgba(0,0,0,.36); }
 
-.app-bengali { font-family: "Hind Siliguri", "Noto Sans Bengali", "Nirmala UI", Inter, system-ui, sans-serif; }
+.app-bengali { font-family: "Hind Siliguri", "Noto Sans Bengali Variable", "Nirmala UI", Inter, system-ui, sans-serif; }
 .app-bengali .hero-title.MuiTypography-root { font-size: clamp(2.9rem, 4.6vw, 4.6rem); letter-spacing: -.045em; line-height: 1.13; }
 .app-bengali .hero-title span { font-weight: 620; }
 .app-bengali .brand-caption { letter-spacing: .08em; }
@@ -362,3 +372,5 @@ kbd { display: inline-grid; place-items: center; min-width: 20px; height: 19px; 
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { scroll-behavior: auto !important; transition-duration: .01ms !important; animation-duration: .01ms !important; }
 }
+
+.smart-mode-note { margin: 14px 0 0 !important; color: #a0a69d; font-size: .74rem !important; line-height: 1.6 !important; }

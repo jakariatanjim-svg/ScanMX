@@ -1,4 +1,6 @@
 import cvModule from '@techstark/opencv-js';
+import { smartClean } from './smartClean.js';
+import { isValidQuad } from './geometry.js';
 
 let cvPromise;
 
@@ -116,78 +118,94 @@ function contourCandidates(cv, source, minArea) {
   return candidates;
 }
 
-/** Find the largest convincing four-sided page outline; fall back to the full photo when uncertain. */
-export function detectPage(image, cv) {
-  const { canvas, width, height } = fitCanvas(image, 900);
+/** Detect on a bounded RGBA image. No DOM dependency, so fixtures can test the real engine. */
+export function detectPageMat(source, cv) {
+  const width = source.cols;
+  const height = source.rows;
   const totalArea = width * height;
-  const minimumArea = totalArea * 0.12;
-  const gray = new cv.Mat();
-  const blurred = new cv.Mat();
-  const edges = new cv.Mat();
-  const kernel = cv.getStructuringElement(cv.MORPH_RECT, new cv.Size(5, 5));
-  const allCandidates = [];
+  const resources = [];
+  const mat = () => {
+    const value = new cv.Mat();
+    resources.push(value);
+    return value;
+  };
   try {
-    const source = cv.imread(canvas);
-    try {
-      cv.cvtColor(source, gray, cv.COLOR_RGBA2GRAY);
-      cv.GaussianBlur(gray, blurred, new cv.Size(5, 5), 0, 0, cv.BORDER_DEFAULT);
-      cv.Canny(blurred, edges, 35, 115);
-      cv.dilate(edges, edges, kernel, new cv.Point(-1, -1), 1);
-      allCandidates.push(...contourCandidates(cv, edges, minimumArea));
-
-      if (!allCandidates.length) {
-        const binary = new cv.Mat();
-        const closed = new cv.Mat();
-        const thresholdKernel = cv.getStructuringElement(cv.MORPH_RECT, new cv.Size(9, 9));
-        try {
-          cv.threshold(blurred, binary, 0, 255, cv.THRESH_BINARY + cv.THRESH_OTSU);
-          cv.morphologyEx(binary, closed, cv.MORPH_CLOSE, thresholdKernel);
-          allCandidates.push(...contourCandidates(cv, closed, minimumArea));
-          if (!allCandidates.length) {
-            cv.threshold(blurred, binary, 0, 255, cv.THRESH_BINARY_INV + cv.THRESH_OTSU);
-            cv.morphologyEx(binary, closed, cv.MORPH_CLOSE, thresholdKernel);
-            allCandidates.push(...contourCandidates(cv, closed, minimumArea));
-          }
-        } finally {
-          binary.delete();
-          closed.delete();
-          thresholdKernel.delete();
-        }
-      }
-      source.delete();
-    } catch (error) {
-      source.delete();
-      throw error;
+    const gray = mat();
+    const blurred = mat();
+    const balanced = mat();
+    const edges = mat();
+    const closed = mat();
+    const binary = mat();
+    const kernel = cv.getStructuringElement(cv.MORPH_RECT, new cv.Size(5, 5));
+    resources.push(kernel);
+    cv.cvtColor(source, gray, cv.COLOR_RGBA2GRAY);
+    cv.GaussianBlur(gray, blurred, new cv.Size(5, 5), 0);
+    const clahe = new cv.CLAHE(2, new cv.Size(8, 8));
+    resources.push(clahe);
+    clahe.apply(blurred, balanced);
+    const candidates = [];
+    const collect = (mask) => {
+      // Close small gaps without inflating every edge and moving the crop out.
+      cv.morphologyEx(mask, closed, cv.MORPH_CLOSE, kernel);
+      candidates.push(...contourCandidates(cv, closed, totalArea * 0.12));
+    };
+    // Complementary passes handle low contrast, dark paper, and uneven lighting.
+    // Always evaluate alternatives: an image-border contour must not suppress
+    // detection of a real document in a later pass.
+    for (const [input, low, high] of [[blurred, 35, 115], [balanced, 15, 60]]) {
+      cv.Canny(input, edges, low, high);
+      collect(edges);
+    }
+    for (const polarity of [cv.THRESH_BINARY, cv.THRESH_BINARY_INV]) {
+      cv.threshold(blurred, binary, 0, 255, polarity + cv.THRESH_OTSU);
+      collect(binary);
     }
 
-    const usable = allCandidates
-      .filter((candidate) => candidate.area < totalArea * 0.985)
-      .sort((first, second) => second.area - first.area);
+    const usable = candidates.filter(({ points, area, ratio }) => {
+      if (!isValidQuad(points) || area >= totalArea * 0.985 || ratio < 0.75 || ratio > 1.25) return false;
+      // Reject the camera frame, but allow a real page to touch one/two edges.
+      const border = Math.max(3, Math.min(width, height) * 0.012);
+      const touches = points.filter((p) => p.x <= border || p.y <= border || p.x >= width - 1 - border || p.y >= height - 1 - border).length;
+      if (touches >= 3) return false;
+      return points.every((point, i) => {
+        const before = points[(i + 3) % 4];
+        const after = points[(i + 1) % 4];
+        const a = { x: before.x - point.x, y: before.y - point.y };
+        const b = { x: after.x - point.x, y: after.y - point.y };
+        const cosine = (a.x * b.x + a.y * b.y) / (Math.hypot(a.x, a.y) * Math.hypot(b.x, b.y));
+        return Math.abs(cosine) < 0.94;
+      });
+    }).map((candidate) => ({
+      ...candidate,
+      score: candidate.area / totalArea * Math.min(candidate.ratio, 1 / candidate.ratio),
+    })).sort((a, b) => b.score - a.score);
+
     const best = usable[0];
-    const scaleX = image.naturalWidth / width;
-    const scaleY = image.naturalHeight / height;
-    if (best) {
-      return {
-        corners: best.points.map((point) => ({ x: point.x * scaleX, y: point.y * scaleY })),
-        detected: true,
-        confidence: Math.min(1, best.area / totalArea),
-      };
-    }
-    return {
-      corners: [
-        { x: 0, y: 0 },
-        { x: image.naturalWidth, y: 0 },
-        { x: image.naturalWidth, y: image.naturalHeight },
-        { x: 0, y: image.naturalHeight },
-      ],
+    return best ? { corners: best.points, detected: true, confidence: best.score } : {
+      corners: [{ x: 0, y: 0 }, { x: width, y: 0 }, { x: width, y: height }, { x: 0, y: height }],
       detected: false,
       confidence: 0,
     };
   } finally {
-    gray.delete();
-    blurred.delete();
-    edges.delete();
-    kernel.delete();
+    resources.forEach((resource) => resource.delete());
+  }
+}
+
+/** Auto-crop on import; preserve the full photograph when no reliable outline exists. */
+export function detectPage(image, cv) {
+  const { canvas, width, height } = fitCanvas(image, 900);
+  const source = cv.imread(canvas);
+  try {
+    const result = detectPageMat(source, cv);
+    return {
+      ...result,
+      corners: result.corners.map((point) => ({
+        x: point.x * image.naturalWidth / width,
+        y: point.y * image.naturalHeight / height,
+      })),
+    };
+  } finally {
+    source.delete();
   }
 }
 
@@ -201,6 +219,7 @@ function enhance(cv, input, mode, settings) {
   };
   try {
     if (mode === 'original') return input;
+    if (mode === 'smart') return smartClean(cv, input, settings);
 
     const exposure = Number(settings.exposure || 0);
     if (mode === 'bw') {
@@ -248,20 +267,10 @@ function enhance(cv, input, mode, settings) {
     cv.split(lab, channels);
     const lightness = channels.get(0);
     resources.push(lightness);
-    let detailSource = lightness;
-    if (mode === 'smart') {
-      const background = makeMat();
-      const normalized = makeMat();
-      let blurSize = Math.max(21, Math.min(61, Math.round(Math.min(input.cols, input.rows) * 0.04)));
-      if (blurSize % 2 === 0) blurSize += 1;
-      cv.GaussianBlur(lightness, background, new cv.Size(blurSize, blurSize), 0, 0, cv.BORDER_REPLICATE);
-      cv.divide(lightness, background, normalized, 255);
-      detailSource = normalized;
-    }
     const equalized = makeMat();
-    const clahe = new cv.CLAHE(mode === 'smart' ? 1.65 : 1.55, new cv.Size(8, 8));
+    const clahe = new cv.CLAHE(1.55, new cv.Size(8, 8));
     try {
-      clahe.apply(detailSource, equalized);
+      clahe.apply(lightness, equalized);
     } finally {
       clahe.delete();
     }
@@ -285,6 +294,7 @@ function enhance(cv, input, mode, settings) {
 
 /** Rectify the selected four corners, then apply the chosen paper treatment. */
 export function processScan(image, corners, options, cv) {
+  if (!isValidQuad(corners)) throw new Error('Select four distinct corners around the document without crossing the edges.');
   const { canvas: sourceCanvas, width: sourceWidth, height: sourceHeight, scale } = fitCanvas(image, options.maxEdge || 1800);
   const source = cv.imread(sourceCanvas);
   const resources = [source];
@@ -309,11 +319,13 @@ export function processScan(image, corners, options, cv) {
     outputHeight = Math.max(1, Math.round(outputHeight * outputScale));
 
     const sourcePoints = cv.matFromArray(4, 1, cv.CV_32FC2, points.flatMap((point) => [point.x, point.y]));
+    resources.push(sourcePoints);
     const targetPoints = cv.matFromArray(4, 1, cv.CV_32FC2, [0, 0, outputWidth - 1, 0, outputWidth - 1, outputHeight - 1, 0, outputHeight - 1]);
+    resources.push(targetPoints);
     const transform = cv.getPerspectiveTransform(sourcePoints, targetPoints);
+    resources.push(transform);
     const warped = makeMat();
     cv.warpPerspective(source, warped, transform, new cv.Size(outputWidth, outputHeight), cv.INTER_CUBIC, cv.BORDER_REPLICATE);
-    resources.push(sourcePoints, targetPoints, transform);
 
     let processed = enhance(cv, warped, options.mode || 'smart', options.settings || {});
     const ownsProcessed = processed !== warped;
