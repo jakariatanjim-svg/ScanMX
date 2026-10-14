@@ -21,6 +21,27 @@ Photos are processed locally in the browser. ScanMX does not upload images, use 
 3. Choose an enhancement style. ScanMX detects the page boundary and shows a cleaned-up preview. Select **Adjust corners** to refine the crop, or rotate the page as needed.
 4. Add more pages if needed, then choose **Export PDF** for the complete scan or save the current page as a PNG.
 
+## Development and checks
+
+Use Node.js 22.12+ (Node 22 LTS recommended).
+
+```sh
+npm ci
+npm run dev
+```
+
+Create the self-contained release with `npm run build`; the output is `dist/index.html`.
+
+```sh
+npm test                              # PDF structure unit tests
+npx playwright install --with-deps chromium
+npm run test:e2e                       # Build, then test the actual standalone HTML
+```
+
+The browser tests open `dist/index.html` directly over `file://` with networking disabled. They check rendering and engine startup, every enhancement mode, crop handles, rotation, non-blank PNG downloads, and multi-page PDF exports. Pull requests and standalone releases run these checks automatically.
+
+For an existing Chromium installation, set `PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH` to its executable instead of installing Playwright's browser. To run the same browser checks against an already-running dev server, use `SCANMX_TEST_URL=http://localhost:5173 npx playwright test` (network access is only disabled for the standalone-file tests).
+
 ## Standalone release
 
 The latest release includes a self-contained `ScanMX-YYYY-MM-DD-HH-MM-SS.html` file. Download it from the repository's **Releases** section, then open it in a modern browser. It is ready to use without a separate install or hosting provider.
