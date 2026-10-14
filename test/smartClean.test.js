@@ -97,3 +97,34 @@ test('warm paper tint is neutralised to white while colored ink keeps its hue', 
     assert.ok(output.data[ink + 2] - output.data[ink] > 60, 'Blue ink should stay blue');
   } finally { input.delete(); output.delete(); }
 });
+
+function notebookPage() {
+  const page = new cv.Mat(400, 500, cv.CV_8UC4, new cv.Scalar(240, 240, 240, 255));
+  for (let y = 60; y < 360; y += 50) cv.line(page, new cv.Point(40, y), new cv.Point(460, y), new cv.Scalar(195, 195, 195, 255), 2);
+  cv.line(page, new cv.Point(80, 205), new cv.Point(420, 205), new cv.Scalar(30, 30, 30, 255), 6);
+  return page;
+}
+
+test('ruled lines are kept by default and erased in text-only mode, while dark text survives', () => {
+  const input = notebookPage();
+  const kept = smartClean(cv, input, { cleanup: 100, keepLines: true });
+  const textOnly = smartClean(cv, input, { cleanup: 100, keepLines: false });
+  try {
+    const lineAt = (mat, x, y) => mat.data[(y * mat.cols + x) * 4];
+    assert.ok(lineAt(kept, 250, 110) < 225, `Ruled line should stay visible: ${lineAt(kept, 250, 110)}`);
+    assert.ok(lineAt(textOnly, 250, 110) >= 245, `Ruled line should be removed: ${lineAt(textOnly, 250, 110)}`);
+    assert.ok(lineAt(textOnly, 250, 205) < 60, `Dark text should survive: ${lineAt(textOnly, 250, 205)}`);
+  } finally {
+    input.delete(); kept.delete(); textOnly.delete();
+  }
+});
+
+test('text is darker in smart clean than the raw stroke tone', () => {
+  const input = notebookPage();
+  const output = smartClean(cv, input, { cleanup: 100 });
+  try {
+    assert.ok(output.data[(205 * output.cols + 250) * 4] < 20, 'Heavy ink should become near black');
+  } finally {
+    input.delete(); output.delete();
+  }
+});

@@ -1,19 +1,21 @@
 /**
  * Smart clean ("magic" document filter).
  *
- * 1. Estimate the paper itself: a grayscale-style morphological dilation removes
- *    dark ink and thin strokes, then a wide blur turns what remains into a smooth
- *    map of the paper's brightness and tint. Fold shadows and uneven lighting
- *    show up in this map because they are broad, while text does not.
- * 2. Divide every colour channel by that map. The paper becomes neutral white,
- *    fold shadows disappear, and coloured ink keeps its hue.
- * 3. Auto-level: a black point is taken from the darkest ink in the page, and the
- *    result is stretched so that paper is white and text is crisp.
- * 4. Blend by the cleanup strength and add a light unsharp mask for text edges.
+ * 1. Estimate the paper itself with a median filter wider than the line spacing.
+ *    Ink covers well under half of that window, so the estimate follows the broad
+ *    fold shadow and uneven light, but not the text.
+ * 2. Re-estimate on the flattened page to remove the small residual that remains
+ *    in the centre of a deep fold.
+ * 3. Divide every colour channel by that paper map. The paper becomes neutral
+ *    white, shadows disappear, and coloured ink keeps its hue.
+ * 4. Optionally remove ruled lines: long, light, straight strokes are erased, while
+ *    dark text is never touched.
+ * 5. Auto-level, deepen the text with a gamma curve, and boost ink colour, so text
+ *    reads darker and more vivid on a white page.
+ * 6. Blend by cleanup strength, then add a light unsharp mask for crisp strokes.
  *
  * Everything runs locally on a bounded working size, so it stays practical on
- * phones. This removes lighting problems; it does not dewarp curved pages or
- * reconstruct text that the camera never captured.
+ * phones. This removes lighting problems; it does not reconstruct missing text.
  */
 
 const BACKGROUND_MAX_EDGE = 480;
@@ -21,6 +23,10 @@ const MIN_PAPER_LEVEL = 40;     // stops deep shadows from amplifying sensor noi
 const PAPER_WHITE_POINT = 235;  // values at or above this become pure white
 const MAX_BLACK_POINT = 110;    // never lift the black point so far that text fades
 const MIN_LEVEL_RANGE = 80;     // minimum tonal span used when stretching levels
+const INK_GAMMA = 1.35;         // > 1 deepens anti-aliased and light strokes
+const INK_CHROMA = 1.2;         // > 1 makes coloured ink more vivid
+const LINE_MARK_LEVEL = 235;    // anything darker than this may be a ruled line
+const TEXT_LEVEL = 110;         // darker than this is text and is never erased
 
 function clamp(value, min, max) {
   return Math.max(min, Math.min(max, value));
@@ -28,9 +34,8 @@ function clamp(value, min, max) {
 
 /**
  * Smooth estimate of the paper colour at every pixel, at full input resolution.
- * A median over a window wider than the text line spacing ignores ink (which
- * covers well under half of the window) and, unlike a max filter, does not
- * drift toward brighter neighbours on a smooth fold shadow.
+ * A median over a window wider than the text line spacing ignores ink and, unlike
+ * a max filter, does not drift toward brighter neighbours on a smooth fold shadow.
  */
 function estimatePaper(cv, rgb, mat) {
   const scale = Math.min(1, BACKGROUND_MAX_EDGE / Math.max(rgb.cols, rgb.rows));
@@ -66,6 +71,54 @@ function blackPoint(levels, pixels) {
   return Math.min(point, MAX_BLACK_POINT, PAPER_WHITE_POINT - MIN_LEVEL_RANGE);
 }
 
+/**
+ * Erase light, long, straight strokes (ruled lines) from the flattened RGB page.
+ * Long horizontal and vertical runs are found by morphological opening; only
+ * light pixels near them are whitened, so dark handwriting stays intact.
+ */
+function removeRuledLines(cv, levels, width, height, mat) {
+  const page = mat();
+  page.create(height, width, cv.CV_8UC3);
+  page.data.set(levels);
+  const gray = mat();
+  cv.cvtColor(page, gray, cv.COLOR_RGB2GRAY);
+  const marks = mat();
+  cv.threshold(gray, marks, LINE_MARK_LEVEL, 255, cv.THRESH_BINARY_INV);
+
+  const horizontal = mat();
+  const vertical = mat();
+  const runH = Math.max(31, Math.round(width * 0.05));
+  const runV = Math.max(31, Math.round(height * 0.05));
+  const kernelH = cv.getStructuringElement(cv.MORPH_RECT, new cv.Size(runH, 1));
+  const kernelV = cv.getStructuringElement(cv.MORPH_RECT, new cv.Size(1, runV));
+  try {
+    cv.morphologyEx(marks, horizontal, cv.MORPH_OPEN, kernelH);
+    cv.morphologyEx(marks, vertical, cv.MORPH_OPEN, kernelV);
+  } finally {
+    kernelH.delete();
+    kernelV.delete();
+  }
+  const lines = mat();
+  cv.bitwise_or(horizontal, vertical, lines);
+  const grown = mat();
+  const kernel = cv.getStructuringElement(cv.MORPH_RECT, new cv.Size(3, 3));
+  try {
+    cv.dilate(lines, grown, kernel);
+  } finally {
+    kernel.delete();
+  }
+
+  const lineData = grown.data;
+  const grayData = gray.data;
+  for (let index = 0; index < width * height; index++) {
+    if (lineData[index] && grayData[index] > TEXT_LEVEL) {
+      levels[index * 3] = 255;
+      levels[index * 3 + 1] = 255;
+      levels[index * 3 + 2] = 255;
+    }
+  }
+}
+
 export function smartClean(cv, input, settings = {}) {
   const resources = [];
   const mat = () => {
@@ -81,15 +134,16 @@ export function smartClean(cv, input, settings = {}) {
     // the slider still runs smoothly from the untouched photo (0) to full clean (100).
     const blend = 1 - (1 - strength) ** 2;
     const exposure = clamp(Number(settings.exposure) || 0, -30, 30);
+    const keepLines = settings.keepLines !== false;
     const width = input.cols;
     const height = input.rows;
     const pixels = width * height;
 
     const rgb = mat();
     cv.cvtColor(input, rgb, cv.COLOR_RGBA2RGB);
+
     // Pass 1 estimates the paper; pass 2 re-estimates it on the flattened page,
-    // which removes the small residual that a single dilation leaves in the
-    // centre of a deep fold (dilation is biased toward brighter neighbours).
+    // which removes the small residual that a single estimate leaves in a deep fold.
     const first = estimatePaper(cv, rgb, mat);
     const color = rgb.data;
     const firstLevels = first.data;
@@ -109,18 +163,34 @@ export function smartClean(cv, input, settings = {}) {
       flat[index] = Math.min(255, (color[index] * 255) / Math.max(MIN_PAPER_LEVEL, paperLevel));
     }
 
-    // Pass 2: auto-level and blend with the original by the cleanup strength.
+    if (!keepLines) removeRuledLines(cv, flat, width, height, mat);
+
+    // Pass 2: auto-level, deepen ink with a single lookup table, and blend with the original.
     const black = blackPoint(flat, pixels);
     const scale = 255 / (PAPER_WHITE_POINT - black);
+    const inkLut = new Uint8ClampedArray(256);
+    for (let value = 0; value < 256; value++) {
+      const leveled = clamp((value - black) * scale, 0, 255) / 255;
+      inkLut[value] = 255 * leveled ** INK_GAMMA;
+    }
     const original = input.data;
     const processed = new cv.Mat(height, width, cv.CV_8UC4);
     resources.push(processed);
     const output = processed.data;
     for (let pixel = 0; pixel < pixels; pixel++) {
+      const r = inkLut[flat[pixel * 3]];
+      const g = inkLut[flat[pixel * 3 + 1]];
+      const b = inkLut[flat[pixel * 3 + 2]];
+      // Boost colour away from the luminance: neutral paper and black text are unchanged.
+      const luma = 0.3 * r + 0.59 * g + 0.11 * b;
+      const inked = [
+        clamp(luma + (r - luma) * INK_CHROMA, 0, 255),
+        clamp(luma + (g - luma) * INK_CHROMA, 0, 255),
+        clamp(luma + (b - luma) * INK_CHROMA, 0, 255),
+      ];
       for (let channel = 0; channel < 3; channel++) {
-        const leveled = clamp((flat[pixel * 3 + channel] - black) * scale, 0, 255);
         const source = original[pixel * 4 + channel];
-        output[pixel * 4 + channel] = clamp(source * (1 - blend) + leveled * blend + exposure, 0, 255);
+        output[pixel * 4 + channel] = clamp(source * (1 - blend) + inked[channel] * blend + exposure, 0, 255);
       }
       output[pixel * 4 + 3] = 255;
     }

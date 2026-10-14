@@ -1,6 +1,7 @@
 import cvModule from '@techstark/opencv-js';
 import { smartClean } from './smartClean.js';
 import { isValidQuad } from './geometry.js';
+import { computeStraightenMaps } from './dewarp.js';
 
 let cvPromise;
 
@@ -91,6 +92,85 @@ function rectangleCorners(rect) {
   }));
 }
 
+function contourPoints(contour) {
+  const points = [];
+  for (let index = 0; index < contour.rows; index += 1) {
+    points.push({ x: contour.data32S[index * 2], y: contour.data32S[index * 2 + 1] });
+  }
+  return points;
+}
+
+function intersectLines(first, second) {
+  const cross = (ax, ay, bx, by) => ax * by - ay * bx;
+  const denominator = cross(first.dir.x, first.dir.y, second.dir.x, second.dir.y);
+  if (Math.abs(denominator) < 1e-6) return null;
+  const offsetX = second.point.x - first.point.x;
+  const offsetY = second.point.y - first.point.y;
+  const t = cross(offsetX, offsetY, second.dir.x, second.dir.y) / denominator;
+  return { x: first.point.x + t * first.dir.x, y: first.point.y + t * first.dir.y };
+}
+
+/**
+ * Snap each side of the quadrilateral to the contour points that lie along it
+ * (total least squares), then move each corner to where its two sides meet.
+ * This follows the real paper edge, so corners land on the true page corners
+ * instead of the nearest coarse polygon vertex. Falls back to the original quad.
+ */
+function refineQuad(points, outline) {
+  const xs = points.map((point) => point.x);
+  const ys = points.map((point) => point.y);
+  const diagonal = Math.hypot(Math.max(...xs) - Math.min(...xs), Math.max(...ys) - Math.min(...ys));
+  const sides = [];
+  for (let index = 0; index < 4; index += 1) {
+    const start = points[index];
+    const end = points[(index + 1) % 4];
+    const length = Math.hypot(end.x - start.x, end.y - start.y);
+    if (length < 2) {
+      sides.push(null);
+      continue;
+    }
+    const ux = (end.x - start.x) / length;
+    const uy = (end.y - start.y) / length;
+    const nx = -uy;
+    const ny = ux;
+    const tolerance = Math.max(2, diagonal * 0.025);
+    const near = outline.filter((point) => {
+      const along = (point.x - start.x) * ux + (point.y - start.y) * uy;
+      if (along < -0.1 * length || along > 1.1 * length) return false;
+      return Math.abs((point.x - start.x) * nx + (point.y - start.y) * ny) <= tolerance;
+    });
+    if (near.length < 12) {
+      sides.push(null);
+      continue;
+    }
+    const meanX = near.reduce((sum, point) => sum + point.x, 0) / near.length;
+    const meanY = near.reduce((sum, point) => sum + point.y, 0) / near.length;
+    let sxx = 0;
+    let sxy = 0;
+    let syy = 0;
+    for (const point of near) {
+      const dx = point.x - meanX;
+      const dy = point.y - meanY;
+      sxx += dx * dx;
+      sxy += dx * dy;
+      syy += dy * dy;
+    }
+    const angle = 0.5 * Math.atan2(2 * sxy, sxx - syy);
+    sides.push({ point: { x: meanX, y: meanY }, dir: { x: Math.cos(angle), y: Math.sin(angle) } });
+  }
+
+  const refined = points.map((point) => ({ ...point }));
+  for (let index = 0; index < 4; index += 1) {
+    const previous = sides[(index + 3) % 4];
+    const next = sides[index];
+    if (!previous || !next) continue;
+    const hit = intersectLines(previous, next);
+    // Only accept small corrections; a large jump means the sides were misread.
+    if (hit && Math.hypot(hit.x - points[index].x, hit.y - points[index].y) <= diagonal * 0.12) refined[index] = hit;
+  }
+  return isValidQuad(refined) ? refined : points;
+}
+
 function contourCandidates(cv, source, minArea) {
   const contours = new cv.MatVector();
   const hierarchy = new cv.Mat();
@@ -105,6 +185,7 @@ function contourCandidates(cv, source, minArea) {
         continue;
       }
       const perimeter = cv.arcLength(contour, true);
+      const outline = contourPoints(contour);
       let foundQuad = false;
       for (const epsilon of [0.012, 0.018, 0.025, 0.035, 0.05]) {
         const approximation = new cv.Mat();
@@ -114,7 +195,7 @@ function contourCandidates(cv, source, minArea) {
           for (let point = 0; point < 4; point += 1) {
             raw.push({ x: approximation.data32S[point * 2], y: approximation.data32S[point * 2 + 1] });
           }
-          const points = orderCorners(raw);
+          const points = refineQuad(orderCorners(raw), outline);
           const quadArea = polygonArea(points);
           const ratio = quadArea / area;
           if (ratio > 0.68 && points.every((point) => Number.isFinite(point.x) && Number.isFinite(point.y))) {
@@ -220,7 +301,7 @@ export function detectPageMat(source, cv) {
 
 /** Auto-crop on import; preserve the full photograph when no reliable outline exists. */
 export function detectPage(image, cv) {
-  const { canvas, width, height } = fitCanvas(image, 900);
+  const { canvas, width, height } = fitCanvas(image, 1200);
   const source = cv.imread(canvas);
   try {
     const result = detectPageMat(source, cv);
@@ -354,8 +435,18 @@ export function processScan(image, corners, options, cv) {
     const warped = makeMat();
     cv.warpPerspective(source, warped, transform, new cv.Size(outputWidth, outputHeight), cv.INTER_CUBIC, cv.BORDER_REPLICATE);
 
-    let processed = enhance(cv, warped, options.mode || 'smart', options.settings || {});
-    const ownsProcessed = processed !== warped;
+    let straightened = warped;
+    if (options.settings?.straighten !== false) {
+      const maps = computeStraightenMaps(cv, warped);
+      if (maps) {
+        resources.push(maps.mapX, maps.mapY);
+        straightened = makeMat();
+        cv.remap(warped, straightened, maps.mapX, maps.mapY, cv.INTER_LINEAR, cv.BORDER_REPLICATE);
+      }
+    }
+
+    let processed = enhance(cv, straightened, options.mode || 'smart', options.settings || {});
+    const ownsProcessed = processed !== straightened;
     if (ownsProcessed) resources.push(processed);
     if (options.rotation) {
       const rotated = makeMat();
