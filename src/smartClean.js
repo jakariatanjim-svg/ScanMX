@@ -11,6 +11,7 @@
  * 4. Optionally erase ruled lines ("Text only") — long straight strokes — while text
  *    shapes are left alone.
  * 5. Auto-level, deepen the text with a gamma curve, and boost ink colour.
+ * 6. Built-in text enhancer (textEnhancer.js) sharpens blurred or faded text.
  *
  * Coloured documents (ID cards, photos, coloured forms):
  * Dividing by a paper map would wash out colour fields, so these skip the paper
@@ -18,6 +19,8 @@
  *
  * Everything runs locally on a bounded working size, so it stays practical on phones.
  */
+
+import { enhanceRgba } from './textEnhancer.js';
 
 const BACKGROUND_MAX_EDGE = 480;
 const MIN_PAPER_LEVEL = 40;     // stops deep shadows from amplifying sensor noise
@@ -216,12 +219,12 @@ export function smartClean(cv, input, settings = {}) {
       output[offset + 3] = 255;
     }
 
-    // Light unsharp mask keeps stroke edges crisp without haloing the paper.
-    const soft = mat();
-    const sharpened = mat();
-    cv.GaussianBlur(processed, soft, new cv.Size(0, 0), 0.8);
-    cv.addWeighted(processed, 1 + 0.35 * strength, soft, -0.35 * strength, 0, sharpened);
-    result = sharpened;
+    // Built-in text enhancer: sharpens blurred or faded strokes and keeps colour.
+    // It replaces the old fixed unsharp mask, which would double-sharpen the page.
+    const enhanced = mat();
+    enhanced.create(height, width, cv.CV_8UC4);
+    enhanced.data.set(enhanceRgba(output, width, height, blend));
+    result = enhanced;
     return result;
   } finally {
     resources.forEach((resource) => { if (resource !== result) resource.delete(); });
