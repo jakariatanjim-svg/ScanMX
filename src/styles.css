@@ -374,3 +374,10 @@ kbd { display: inline-grid; place-items: center; min-width: 20px; height: 19px; 
 }
 
 .smart-mode-note { margin: 14px 0 0 !important; color: #a0a69d; font-size: .74rem !important; line-height: 1.6 !important; }
+
+/* Smart clean options: ruled-line toggle and curved-text straightening. */
+.option-block { display: grid; gap: 8px; margin-top: 14px; }
+.option-title { font-size: 0.82rem; color: #a0a69d; font-weight: 600; }
+.lines-toggle .MuiToggleButton-root { text-transform: none; font-weight: 600; border-radius: 10px; }
+.straighten-toggle { display: flex; margin: 12px 0 0; }
+.straighten-toggle .MuiFormControlLabel-label { font-size: 0.9rem; }

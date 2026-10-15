@@ -1,5 +1,8 @@
 name: Build standalone HTML
 
+# Run manually from Actions → Build standalone HTML → Run workflow.
+#   • main (default branch): build, then publish a GitHub release.
+#   • any other branch:      build, then upload a downloadable test artifact only.
 on:
   workflow_dispatch:
 
@@ -17,6 +20,7 @@ jobs:
     outputs:
       artifact: ${{ steps.build-info.outputs.artifact }}
       release_name: ${{ steps.build-info.outputs.release_name }}
+      file_stem: ${{ steps.build-info.outputs.file_stem }}
       tag: ${{ steps.build-info.outputs.tag }}
     steps:
       - name: Check out the selected branch
@@ -41,20 +45,31 @@ jobs:
         id: build-info
         shell: bash
         run: |
-          stamp="$(date -u '+%Y-%m-%d-%H-%M-%S')"
-          release_name="ScanMX-${stamp}"
+          # Names use Bangladesh time (Asia/Dhaka), independent of the runner's clock.
+          # Release title: "ScanMX dd/mm/yyyy BD HH:MM"
+          # File and tag use dashes because "/" and ":" are not allowed in file names.
+          date_part="$(TZ=Asia/Dhaka date '+%d/%m/%Y')"
+          time_part="$(TZ=Asia/Dhaka date '+%H:%M')"
+          release_name="ScanMX ${date_part} BD ${time_part}"
+          file_stem="ScanMX-$(TZ=Asia/Dhaka date '+%d-%m-%Y')-BD-$(TZ=Asia/Dhaka date '+%H-%M')"
+          tag="scanmx-$(TZ=Asia/Dhaka date '+%d-%m-%Y-bd-%H-%M')-run${GITHUB_RUN_NUMBER}"
           artifact="ScanMX-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
           mkdir -p release
-          cp dist/index.html "release/${release_name}.html"
-          echo "release_name=${release_name}" >> "$GITHUB_OUTPUT"
-          echo "tag=scanmx-${stamp}-${GITHUB_RUN_NUMBER}-${GITHUB_RUN_ATTEMPT}" >> "$GITHUB_OUTPUT"
-          echo "artifact=${artifact}" >> "$GITHUB_OUTPUT"
+          cp dist/index.html "release/${file_stem}.html"
+          {
+            echo "release_name=${release_name}"
+            echo "file_stem=${file_stem}"
+            echo "tag=${tag}"
+            echo "artifact=${artifact}"
+          } >> "$GITHUB_OUTPUT"
 
       - name: Confirm the build is a single HTML file
         shell: bash
+        env:
+          FILE_STEM: ${{ steps.build-info.outputs.file_stem }}
         run: |
-          test -s "release/${{ steps.build-info.outputs.release_name }}.html"
-          if grep -Eqi '<script[^>]+src=|<link[^>]+stylesheet[^>]+href=' "release/${{ steps.build-info.outputs.release_name }}.html"; then
+          test -s "release/${FILE_STEM}.html"
+          if grep -Eqi '<script[^>]+src=|<link[^>]+stylesheet[^>]+href=' "release/${FILE_STEM}.html"; then
             echo "Expected one self-contained HTML file, but found an external runtime asset."
             exit 1
           fi
@@ -70,11 +85,13 @@ jobs:
       - name: Summarize build destination
         env:
           IS_RELEASE: ${{ github.ref == 'refs/heads/main' }}
+          RELEASE_NAME: ${{ steps.build-info.outputs.release_name }}
+          FILE_STEM: ${{ steps.build-info.outputs.file_stem }}
         run: |
           if [ "$IS_RELEASE" = "true" ]; then
-            echo "### Main build: a GitHub release will be published after this build." >> "$GITHUB_STEP_SUMMARY"
+            echo "### Main build: a GitHub release named \"${RELEASE_NAME}\" will be published." >> "$GITHUB_STEP_SUMMARY"
           else
-            echo "### Preview build: download the HTML from this run's Artifacts section. No tag or release will be created." >> "$GITHUB_STEP_SUMMARY"
+            echo "### Test build: download \"${FILE_STEM}.html\" from this run's Artifacts section. No tag or release is created." >> "$GITHUB_STEP_SUMMARY"
           fi
 
   release:
@@ -96,10 +113,11 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
           RELEASE_NAME: ${{ needs.build.outputs.release_name }}
+          FILE_STEM: ${{ needs.build.outputs.file_stem }}
           RELEASE_TAG: ${{ needs.build.outputs.tag }}
         run: |
           gh release create "$RELEASE_TAG" \
-            "release/${RELEASE_NAME}.html" \
+            "release/${FILE_STEM}.html" \
             --target "$GITHUB_SHA" \
             --title "$RELEASE_NAME" \
             --notes "ScanMX standalone offline document scanner. Download the HTML file and open it in a modern browser. Documents are processed locally; no images are uploaded. Built from main at ${GITHUB_SHA}."
