@@ -1,7 +1,7 @@
 """
 Train the built-in text enhancer used by Smart clean.
 
-The model is a tiny residual CNN (3 convolution layers, 4 hidden channels, about
+The model is a tiny residual CNN (3 convolution layers, 6 hidden channels, about
 400 weights). It learns to map a blurred, low-contrast, noisy page crop back to
 its crisp version. Training data is synthetic: text is rendered with DejaVu fonts,
 then degraded with blur, downscaling, contrast loss, uneven light and noise.
@@ -30,12 +30,14 @@ OUT_MODEL = ROOT / "src" / "model" / "text-enhancer.js"
 OUT_GOLDEN = ROOT / "test" / "fixtures" / "text-enhancer-golden.json"
 
 SEED = 7
-HIDDEN = 4
+HIDDEN = 6
 PATCH = 40
 PAGE = 160
 PAGES = 700
 CROPS_PER_PAGE = 8
-ITERATIONS = 9000
+ITERATIONS = 12000
+# Halo penalty: output may not exceed the clean local maximum or fall below the clean local minimum.
+HALO_WEIGHT = 0.5
 BATCH = 64
 
 FONTS = [
@@ -177,8 +179,21 @@ def forward(params, x, keep=False):
     return y
 
 
+def local_extreme(x, fn):
+    """3x3 max or min over the last two axes, with edge replication."""
+    h, w = x.shape[-2:]
+    padded = np.pad(x, [(0, 0)] * (x.ndim - 2) + [(1, 1), (1, 1)], mode="edge")
+    out = x.copy()
+    for dy in range(3):
+        for dx in range(3):
+            out = fn(out, padded[..., dy:dy + h, dx:dx + w])
+    return out
+
+
 def train(params, train_set):
     inputs, targets = train_set
+    upper = local_extreme(targets, np.maximum)
+    lower = local_extreme(targets, np.minimum)
     m = {k: np.zeros_like(v) for k, v in params.items()}
     v = {k: np.zeros_like(p) for k, p in params.items()}
     beta1, beta2, eps = 0.9, 0.999, 1e-8
@@ -191,6 +206,12 @@ def train(params, train_set):
         y, (x0, a1, r1, a2, r2, raw) = forward(params, x, keep=True)
         grad_y = 2 * (y - t) / t.size
         grad_y = grad_y * ((raw > 0) & (raw < 1))  # no gradient through clipped values
+        # Halo penalty on the clean local range. It acts on the batch rows picked above.
+        up = upper[idx]
+        low = lower[idx]
+        over = np.maximum(y - up, 0)
+        under = np.maximum(low - y, 0)
+        grad_y = grad_y + HALO_WEIGHT * 2 * (over - under) / t.size
         d_r2, dw3, db3 = conv_backward(grad_y, r2, params["w3"])
         d_a2 = d_r2 * (a2 > 0)
         d_r1, dw2, db2 = conv_backward(d_a2, r1, params["w2"])
@@ -318,6 +339,7 @@ def main():
         "psnr_sharpen_only": round(float(np.mean([psnr(a, b) for a, b in zip(val_x, val_t)])), 2),
         "psnr_enhancer": round(float(np.mean([psnr(a, b) for a, b in zip(enhanced, val_t)])), 2),
         "gate_scale": GATE_SCALE,
+        "hidden_channels": HIDDEN,
         "parameters": int(sum(p.size for p in params.values())),
         "training_patches": int(len(train_set[0])),
     }

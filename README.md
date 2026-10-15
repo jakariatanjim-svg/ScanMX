@@ -7,7 +7,7 @@
 - Automatically finds document edges, crops the page, straightens perspective, and lets you adjust the four corners by hand.
 - Smart clean removes folds, shadows, uneven light and paper tint. Choose **Keep lines** (default) or **Text only**, which also erases ruled lines and table borders.
 - Straighten curved or wavy text caused by folds or a curled page. Coloured documents such as ID cards keep their colour.
-- A built-in text enhancer (a tiny 225-weight CNN, runs offline in the browser) sharpens blurred or faded text. Its weights are in `src/model/text-enhancer.js`; retrain with `python3 tools/text-enhancer/train_text_enhancer.py` (needs numpy and Pillow).
+- A built-in text enhancer (a tiny 445-weight CNN, runs offline in the browser) sharpens blurred or faded text. Its weights are in `src/model/text-enhancer.js`; retrain with `python3 tools/text-enhancer/train_text_enhancer.py` (needs numpy and Pillow).
 - **Smart clean** (the default) removes fold shadows, uneven lighting and paper tint automatically, leaving a clean white page while keeping text and colored ink. Cleanup strength and exposure remain adjustable. Color, Grayscale and Black & white modes are also available.
 - Supports multiple pages, rotation, camera capture on supported phones, drag-and-drop, and pasting a screenshot with **Ctrl+V** (or **⌘+V** on Mac).
 - Exports a multi-page PDF or an individual page as a PNG image.
